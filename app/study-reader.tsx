@@ -663,6 +663,8 @@ export function StudyReader() {
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedEntryGroup = useRef<string[]>([]);
+  const pendingClipboardText = useRef<string | null>(null);
+  const clipboardWriteInFlight = useRef(false);
   const panKeyHeldRef = useRef(false);
   const pagePanDrag = useRef<{
     pointerId: number;
@@ -1078,19 +1080,48 @@ export function StudyReader() {
     [emphasizedEntries, setEmphasizedEntries, showToast],
   );
 
-  const startEntryCopyGroup = useCallback(
-    async (entry: EntryBlock) => {
-      const text = entry.text.trim();
-      if (!text) return;
-      copiedEntryGroup.current = [entry.id];
-      const copied = await copyTextToClipboard(text);
-      showToast(copied ? "已开始新复制组：当前 1 个条目" : "复制失败，请检查剪贴板权限");
+  const queueClipboardWrite = useCallback(
+    (text: string) => {
+      pendingClipboardText.current = text;
+      if (clipboardWriteInFlight.current) return;
+
+      clipboardWriteInFlight.current = true;
+      void (async () => {
+        try {
+          while (pendingClipboardText.current !== null) {
+            const latestText = pendingClipboardText.current;
+            pendingClipboardText.current = null;
+            const copied = await copyTextToClipboard(latestText);
+            if (!copied) {
+              pendingClipboardText.current = null;
+              showToast("复制失败，请检查剪贴板权限");
+              return;
+            }
+          }
+        } finally {
+          clipboardWriteInFlight.current = false;
+          if (pendingClipboardText.current !== null) {
+            queueMicrotask(() => queueClipboardWrite(pendingClipboardText.current ?? ""));
+          }
+        }
+      })();
     },
     [showToast],
   );
 
+  const startEntryCopyGroup = useCallback(
+    (entry: EntryBlock) => {
+      const text = entry.text.trim();
+      if (!text) return;
+      copiedEntryGroup.current = [entry.id];
+      queueClipboardWrite(text);
+      showToast("已开始新复制组：当前 1 个条目");
+    },
+    [queueClipboardWrite, showToast],
+  );
+
   const appendEntryToCopyGroup = useCallback(
-    async (entry: EntryBlock) => {
+    (entry: EntryBlock) => {
       if (!copiedEntryGroup.current.length) {
         showToast("请先悬停一个条目并按 W 开始复制组");
         return;
@@ -1106,14 +1137,10 @@ export function StudyReader() {
       if (!text) return;
 
       copiedEntryGroup.current = nextEntryIds;
-      const copied = await copyTextToClipboard(text);
-      showToast(
-        copied
-          ? `已复制组合内容：共 ${nextEntryIds.length} 个条目`
-          : "复制失败，请检查剪贴板权限",
-      );
+      queueClipboardWrite(text);
+      showToast(`已复制组合内容：共 ${nextEntryIds.length} 个条目`);
     },
-    [entriesById, showToast],
+    [entriesById, queueClipboardWrite, showToast],
   );
 
   const openAnnotation = useCallback(
