@@ -1742,7 +1742,9 @@ export function StudyReader() {
         const parentIds = parentEntryIdsByPage[pageIndex] ?? new Map<string, string | null>();
         const targetEntries = entries.filter((entry) => {
           if (entry.isSummary) return false;
-          if (interactionMode === "entry") return Boolean(notes[entry.id]);
+          if (interactionMode === "entry") {
+            return Boolean(notes[entry.id]) || emphasizedEntrySet.has(entry.id);
+          }
           return entry.lineIndexes.some((lineIndex) =>
             focusHighlightLineSet.has(`p${pageNumber}-l${lineIndex}`),
           );
@@ -1773,6 +1775,7 @@ export function StudyReader() {
       focusHighlightLineSet,
       interactionMode,
       notes,
+      emphasizedEntrySet,
       parentEntryIdsByPage,
       showSummaries,
       summaryOnly,
