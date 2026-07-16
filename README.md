@@ -34,13 +34,16 @@ npm run test
 
 ## 云同步配置
 
-先复制 `.env.example` 为 `.env.local`，填入全新 Supabase Project 的公开 URL 与 Publishable/anon key。然后在该项目的 SQL Editor 中执行：
+独立 Supabase 后端已经创建并部署：
 
-```text
-supabase/zhengzhidaotu_20260715_k4m8_schema.sql
-```
+- Project Ref：`womuvfxejdjwzcyjvclz`
+- Project URL：`https://womuvfxejdjwzcyjvclz.supabase.co`
+- 数据表：`public.zhengzhidaotu_20260715_k4m8_items`
+- 登录回调：当前 GitHub Pages 地址与 `http://localhost:3000`
 
-控制台逐步配置说明见 [docs/SUPABASE_GITHUB_SETUP_ZH.md](docs/SUPABASE_GITHUB_SETUP_ZH.md)。前端不会使用服务器秘密密钥，也不会保存明文密码。
+数据库结构由 `supabase/migrations/20260716080611_zhengzhidaotu_20260715_k4m8_schema.sql` 管理，Auth 配置记录在 `supabase/config.toml`。本机公开配置保存在被 Git 忽略的 `.env.local`，GitHub Pages 使用仓库 Actions Secrets。前端只使用 Publishable Key；旧式 `anon/service_role` API Keys 已停用，服务器秘密密钥不会进入前端或仓库。
+
+配置与验收说明见 [docs/SUPABASE_GITHUB_SETUP_ZH.md](docs/SUPABASE_GITHUB_SETUP_ZH.md)。
 
 ## 数据与隔离说明
 
