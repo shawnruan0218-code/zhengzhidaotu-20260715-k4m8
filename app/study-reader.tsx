@@ -660,6 +660,7 @@ export function StudyReader() {
   const viewerRef = useRef<HTMLElement | null>(null);
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedEntryGroup = useRef<string[]>([]);
   const ocrRequests = useRef(new Set<number>());
   const zoomRef = useRef(1);
   const renderedZoomRef = useRef(1);
@@ -1067,14 +1068,42 @@ export function StudyReader() {
     [emphasizedEntries, setEmphasizedEntries, showToast],
   );
 
-  const copyEntryToClipboard = useCallback(
+  const startEntryCopyGroup = useCallback(
     async (entry: EntryBlock) => {
       const text = entry.text.trim();
       if (!text) return;
+      copiedEntryGroup.current = [entry.id];
       const copied = await copyTextToClipboard(text);
-      showToast(copied ? "已复制条目到剪贴板" : "复制失败，请检查剪贴板权限");
+      showToast(copied ? "已开始新复制组：当前 1 个条目" : "复制失败，请检查剪贴板权限");
     },
     [showToast],
+  );
+
+  const appendEntryToCopyGroup = useCallback(
+    async (entry: EntryBlock) => {
+      if (!copiedEntryGroup.current.length) {
+        showToast("请先悬停一个条目并按 W 开始复制组");
+        return;
+      }
+
+      const nextEntryIds = copiedEntryGroup.current.includes(entry.id)
+        ? copiedEntryGroup.current
+        : [...copiedEntryGroup.current, entry.id];
+      const text = nextEntryIds
+        .map((entryId) => entriesById.get(entryId)?.text.trim() ?? "")
+        .filter(Boolean)
+        .join("\n\n");
+      if (!text) return;
+
+      copiedEntryGroup.current = nextEntryIds;
+      const copied = await copyTextToClipboard(text);
+      showToast(
+        copied
+          ? `已复制组合内容：共 ${nextEntryIds.length} 个条目`
+          : "复制失败，请检查剪贴板权限",
+      );
+    },
+    [entriesById, showToast],
   );
 
   const openAnnotation = useCallback(
@@ -1492,7 +1521,32 @@ export function StudyReader() {
         const targetedEntry = targetedEntryId ? entriesById.get(targetedEntryId) : null;
         if (targetedEntry) {
           event.preventDefault();
-          void copyEntryToClipboard(targetedEntry);
+          void startEntryCopyGroup(targetedEntry);
+          return;
+        }
+      }
+
+      if (
+        !isTyping &&
+        !activeEntryId &&
+        interactionMode === "entry" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key === "1"
+      ) {
+        if (event.repeat) {
+          event.preventDefault();
+          return;
+        }
+        const targetedHotspot =
+          document.querySelector<HTMLElement>(".entry-hotspot:hover") ??
+          (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".entry-hotspot");
+        const targetedEntryId = targetedHotspot?.dataset.entryId ?? hoveredEntryId;
+        const targetedEntry = targetedEntryId ? entriesById.get(targetedEntryId) : null;
+        if (targetedEntry) {
+          event.preventDefault();
+          void appendEntryToCopyGroup(targetedEntry);
           return;
         }
       }
@@ -1530,7 +1584,7 @@ export function StudyReader() {
     closeAnnotation,
     commitZoom,
     commitPendingHighlight,
-    copyEntryToClipboard,
+    appendEntryToCopyGroup,
     currentPage,
     entriesById,
     floatingNoteEntryId,
@@ -1541,6 +1595,7 @@ export function StudyReader() {
     notes,
     openAnnotation,
     outlineOpen,
+    startEntryCopyGroup,
     toggleEntryEmphasis,
     toggleZoomMode,
     undoLastHighlight,
@@ -2320,8 +2375,8 @@ export function StudyReader() {
                             type="button"
                             className={`entry-hotspot ${hasNote ? "has-note" : ""} ${isEmphasized ? "is-emphasized" : ""}`}
                             data-entry-id={entry.id}
-                            aria-label={`${entry.text}${hasNote ? "，已有批注，点击查看" : "，按 Q 添加批注"}${isEmphasized ? "，已整条划线和高亮，按 E 撤回" : "，按 E 整条划线和高亮"}，按 W 复制条目`}
-                            title={`${hasNote ? "点击查看批注；" : "按 Q 添加批注；"}${isEmphasized ? "按 E 撤回整条划线；" : "按 E 整条划线；"}按 W 复制条目`}
+                            aria-label={`${entry.text}${hasNote ? "，已有批注，点击查看" : "，按 Q 添加批注"}${isEmphasized ? "，已整条划线和高亮，按 E 撤回" : "，按 E 整条划线和高亮"}，按 W 开始新复制组，按数字 1 追加到复制组`}
+                            title={`${hasNote ? "点击查看批注；" : "按 Q 添加批注；"}${isEmphasized ? "按 E 撤回整条划线；" : "按 E 整条划线；"}按 W 开始新复制组；按 1 追加当前条目`}
                             key={entry.id}
                             style={{
                               left: `${Math.max(0, entry.x - 0.0018) * 100}%`,
