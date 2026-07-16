@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CloudSyncController } from "./lib/use-cloud-sync";
 
 type Props = {
@@ -82,33 +83,31 @@ export function AccountControls({ cloud }: Props) {
 
   return (
     <>
-      <div className="toolbar-group account-controls" aria-label="账号和云同步">
+      <div className="account-entry" aria-label="登录配置和云同步">
         <button
           type="button"
-          className="account-button"
+          className="account-entry-button"
           onClick={() => setOpen(true)}
           disabled={!cloud.authReady}
           title={cloud.user?.email ?? "登录后可跨设备同步"}
         >
-          <span className={`sync-dot sync-${cloud.status}`} aria-hidden="true" />
-          <span className="account-label">
-            {cloud.user?.email ? cloud.user.email.split("@")[0] : cloud.authReady ? "登录" : "读取账号"}
+          <span className="account-entry-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <path d="M12 12.4a4.2 4.2 0 1 0 0-8.4 4.2 4.2 0 0 0 0 8.4Zm-7.1 7.1c.6-3.2 3.4-5.3 7.1-5.3s6.5 2.1 7.1 5.3" />
+            </svg>
           </span>
+          <span className="account-entry-copy">
+            <strong>登录配置</strong>
+            <span className="account-entry-meta">
+              <i className={`sync-dot sync-${cloud.status}`} aria-hidden="true" />
+              <span>{cloud.user?.email ? cloud.user.email.split("@")[0] : cloud.authReady ? cloud.statusText : "正在读取账号"}</span>
+            </span>
+          </span>
+          <span className="account-entry-chevron" aria-hidden="true">›</span>
         </button>
-        <span className="sync-status" title={cloud.statusText}>{cloud.statusText}</span>
-        {cloud.user && (
-          <button
-            type="button"
-            className="sync-now-button"
-            disabled={cloud.status === "syncing"}
-            onClick={() => void handleSync()}
-          >
-            {cloud.status === "syncing" ? "同步中" : "立即同步"}
-          </button>
-        )}
       </div>
 
-      {open && (
+      {open && createPortal(
         <div className="account-backdrop" role="presentation" onMouseDown={close}>
           <section
             className="account-sheet"
@@ -215,7 +214,8 @@ export function AccountControls({ cloud }: Props) {
               </>
             )}
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

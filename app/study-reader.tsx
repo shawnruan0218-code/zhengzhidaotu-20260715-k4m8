@@ -1770,13 +1770,7 @@ export function StudyReader() {
   return (
     <main className="reader-shell">
       <header className="reader-toolbar" aria-label="复习工具栏">
-        <div className="brand-block">
-          <span className="brand-mark" aria-hidden="true">政</span>
-          <div>
-            <strong>政治图谱复习室</strong>
-            <span>正文共 {PAGES.length} 页</span>
-          </div>
-        </div>
+        <AccountControls cloud={cloud} />
 
         <div className="toolbar-lanes">
           <div className="toolbar-row toolbar-primary-row">
@@ -1903,8 +1897,6 @@ export function StudyReader() {
 
           </div>
           <div className="toolbar-row toolbar-secondary-row">
-
-        <AccountControls cloud={cloud} />
 
         <div className="toolbar-group filter-options" aria-label="内容筛选">
           <label className="filter-check">
