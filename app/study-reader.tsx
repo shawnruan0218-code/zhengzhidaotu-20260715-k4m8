@@ -652,6 +652,8 @@ export function StudyReader() {
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [expandedOutlineRoots, setExpandedOutlineRoots] = useState<Set<string>>(() => new Set());
   const [expandedOutlineSections, setExpandedOutlineSections] = useState<Set<string>>(() => new Set());
+  const [panKeyHeld, setPanKeyHeld] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
   const [hoveredEntryId, setHoveredEntryId] = useState<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [floatingNoteEntryId, setFloatingNoteEntryId] = useState<string | null>(null);
@@ -661,6 +663,14 @@ export function StudyReader() {
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedEntryGroup = useRef<string[]>([]);
+  const panKeyHeldRef = useRef(false);
+  const pagePanDrag = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startScrollLeft: number;
+    startScrollTop: number;
+  } | null>(null);
   const ocrRequests = useRef(new Set<number>());
   const zoomRef = useRef(1);
   const renderedZoomRef = useRef(1);
@@ -1384,6 +1394,102 @@ export function StudyReader() {
   }, [commitZoom, zoomMode]);
 
   useEffect(() => {
+    const releasePanKey = () => {
+      const activePan = pagePanDrag.current;
+      if (activePan && viewerRef.current?.hasPointerCapture(activePan.pointerId)) {
+        viewerRef.current.releasePointerCapture(activePan.pointerId);
+      }
+      panKeyHeldRef.current = false;
+      pagePanDrag.current = null;
+      setPanKeyHeld(false);
+      setIsPanning(false);
+    };
+
+    const handlePanKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+      if (
+        !zoomMode ||
+        isTyping ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "t"
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      if (panKeyHeldRef.current) return;
+      panKeyHeldRef.current = true;
+      setPanKeyHeld(true);
+      window.getSelection()?.removeAllRanges();
+      setPendingSelection([]);
+    };
+
+    const handlePanKeyUp = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "t") releasePanKey();
+    };
+
+    window.addEventListener("keydown", handlePanKeyDown);
+    window.addEventListener("keyup", handlePanKeyUp);
+    window.addEventListener("blur", releasePanKey);
+    if (!zoomMode) releasePanKey();
+    return () => {
+      window.removeEventListener("keydown", handlePanKeyDown);
+      window.removeEventListener("keyup", handlePanKeyUp);
+      window.removeEventListener("blur", releasePanKey);
+    };
+  }, [zoomMode]);
+
+  const handlePagePanPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (!zoomMode || !panKeyHeldRef.current || event.pointerType !== "mouse" || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    window.getSelection()?.removeAllRanges();
+    setPendingSelection([]);
+    pagePanDrag.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startScrollLeft: event.currentTarget.scrollLeft,
+      startScrollTop: event.currentTarget.scrollTop,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanning(true);
+  }, [zoomMode]);
+
+  const handlePagePanPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const activePan = pagePanDrag.current;
+    if (!activePan || activePan.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.scrollLeft =
+      activePan.startScrollLeft - (event.clientX - activePan.startClientX);
+    event.currentTarget.scrollTop =
+      activePan.startScrollTop - (event.clientY - activePan.startClientY);
+  }, []);
+
+  const finishPagePan = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const activePan = pagePanDrag.current;
+    if (!activePan || activePan.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    pagePanDrag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsPanning(false);
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isTyping =
@@ -1997,6 +2103,7 @@ export function StudyReader() {
             type="button"
             className={`zoom-toggle ${zoomMode ? "active" : ""}`}
             aria-pressed={zoomMode}
+            title={zoomMode ? "按住 T 并拖动鼠标可平移页面；快捷键 P 关闭缩放" : "快捷键 P 开启缩放"}
             onKeyDown={(event) => {
               if (event.code === "Space") event.preventDefault();
             }}
@@ -2170,7 +2277,7 @@ export function StudyReader() {
 
       <section
         ref={viewerRef}
-        className={`reader-viewport mode-${mode} interaction-${interactionMode} ${zoomMode ? "zoom-enabled" : ""}`}
+        className={`reader-viewport mode-${mode} interaction-${interactionMode} ${zoomMode ? "zoom-enabled" : ""} ${panKeyHeld ? "pan-ready" : ""} ${isPanning ? "pan-dragging" : ""}`}
         style={
           {
             "--page-sheet-width": `${Math.round(1400 * zoom)}px`,
@@ -2179,6 +2286,10 @@ export function StudyReader() {
         }
         aria-label="政治思维导图阅读区"
         onWheel={handleWheelZoom}
+        onPointerDownCapture={handlePagePanPointerDown}
+        onPointerMoveCapture={handlePagePanPointerMove}
+        onPointerUpCapture={finishPagePan}
+        onPointerCancelCapture={finishPagePan}
       >
         {mode === "page" && (
           <button

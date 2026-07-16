@@ -903,6 +903,24 @@ kbd {
   height: 0;
 }
 
+.reader-viewport.pan-ready,
+.reader-viewport.pan-ready * {
+  cursor: grab !important;
+  user-select: none !important;
+}
+
+.reader-viewport.pan-dragging,
+.reader-viewport.pan-dragging * {
+  cursor: grabbing !important;
+}
+
+.reader-viewport.pan-ready .entry-hotspot:hover,
+.reader-viewport.pan-ready .entry-hotspot:focus-visible {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .pages-track {
   position: relative;
   z-index: 1;
