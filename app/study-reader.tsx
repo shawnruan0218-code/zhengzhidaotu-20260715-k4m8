@@ -436,6 +436,36 @@ function entryMarkerDepth(text: string) {
   return null;
 }
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the local selection fallback when clipboard permission is unavailable.
+  }
+
+  const previouslyFocused = document.activeElement as HTMLElement | null;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.readOnly = true;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+    previouslyFocused?.focus({ preventScroll: true });
+  }
+}
+
 function findParentEntry(entry: EntryBlock, entries: EntryBlock[]) {
   const entryCenterY = entry.y + entry.height / 2;
   const entryDepth = entryMarkerDepth(entry.text);
@@ -1037,6 +1067,16 @@ export function StudyReader() {
     [emphasizedEntries, setEmphasizedEntries, showToast],
   );
 
+  const copyEntryToClipboard = useCallback(
+    async (entry: EntryBlock) => {
+      const text = entry.text.trim();
+      if (!text) return;
+      const copied = await copyTextToClipboard(text);
+      showToast(copied ? "已复制条目到剪贴板" : "复制失败，请检查剪贴板权限");
+    },
+    [showToast],
+  );
+
   const openAnnotation = useCallback(
     (entry: EntryBlock) => {
       setFloatingNoteEntryId(null);
@@ -1432,6 +1472,31 @@ export function StudyReader() {
         }
       }
 
+      if (
+        !isTyping &&
+        !activeEntryId &&
+        interactionMode === "entry" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "w"
+      ) {
+        if (event.repeat) {
+          event.preventDefault();
+          return;
+        }
+        const targetedHotspot =
+          document.querySelector<HTMLElement>(".entry-hotspot:hover") ??
+          (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".entry-hotspot");
+        const targetedEntryId = targetedHotspot?.dataset.entryId ?? hoveredEntryId;
+        const targetedEntry = targetedEntryId ? entriesById.get(targetedEntryId) : null;
+        if (targetedEntry) {
+          event.preventDefault();
+          void copyEntryToClipboard(targetedEntry);
+          return;
+        }
+      }
+
       if (!isTyping && interactionMode === "highlight" && event.key.toLowerCase() === "q") {
         if (commitPendingHighlight() || addSelectionHighlight()) {
           event.preventDefault();
@@ -1465,6 +1530,7 @@ export function StudyReader() {
     closeAnnotation,
     commitZoom,
     commitPendingHighlight,
+    copyEntryToClipboard,
     currentPage,
     entriesById,
     floatingNoteEntryId,
@@ -2262,8 +2328,8 @@ export function StudyReader() {
                             type="button"
                             className={`entry-hotspot ${hasNote ? "has-note" : ""} ${isEmphasized ? "is-emphasized" : ""}`}
                             data-entry-id={entry.id}
-                            aria-label={`${entry.text}${hasNote ? "，已有批注，点击查看" : "，按 Q 添加批注"}${isEmphasized ? "，已整条划线和高亮，按 E 撤回" : "，按 E 整条划线和高亮"}`}
-                            title={`${hasNote ? "点击查看批注；" : "按 Q 添加批注；"}${isEmphasized ? "按 E 撤回整条划线" : "按 E 整条划线"}`}
+                            aria-label={`${entry.text}${hasNote ? "，已有批注，点击查看" : "，按 Q 添加批注"}${isEmphasized ? "，已整条划线和高亮，按 E 撤回" : "，按 E 整条划线和高亮"}，按 W 复制条目`}
+                            title={`${hasNote ? "点击查看批注；" : "按 Q 添加批注；"}${isEmphasized ? "按 E 撤回整条划线；" : "按 E 整条划线；"}按 W 复制条目`}
                             key={entry.id}
                             style={{
                               left: `${Math.max(0, entry.x - 0.0018) * 100}%`,
