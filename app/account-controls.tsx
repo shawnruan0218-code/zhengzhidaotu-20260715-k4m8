@@ -83,7 +83,7 @@ export function AccountControls({ cloud }: Props) {
 
   return (
     <>
-      <div className="account-entry" aria-label="登录配置和云同步">
+      <div className="account-entry" aria-label="账号和云同步">
         <button
           type="button"
           className="account-entry-button"
@@ -97,7 +97,7 @@ export function AccountControls({ cloud }: Props) {
             </svg>
           </span>
           <span className="account-entry-copy">
-            <strong>登录配置</strong>
+            <strong>账号</strong>
             <span className="account-entry-meta">
               <i className={`sync-dot sync-${cloud.status}`} aria-hidden="true" />
               <span>{cloud.user?.email ? cloud.user.email.split("@")[0] : cloud.authReady ? cloud.statusText : "正在读取账号"}</span>
@@ -147,7 +147,7 @@ export function AccountControls({ cloud }: Props) {
                   <button
                     type="button"
                     className="save-note"
-                    disabled={busy || cloud.status === "syncing"}
+                    disabled={busy}
                     onClick={() => void handleSync()}
                   >
                     立即同步
