@@ -7,7 +7,6 @@ import {
   type KnowledgeEntry,
   type KnowledgeIndex,
   type KnowledgeMatch,
-  localKnowledgeAnswer,
   rankKnowledgeCandidates,
 } from "./lib/knowledge-search";
 import { withBasePath } from "./lib/app-config";
@@ -138,18 +137,14 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
       const index = await loadKnowledgeIndex();
       if (requestId.current !== currentRequest) return;
       const candidates = rankKnowledgeCandidates(requestedQuery, index.entries, 48);
-      const local = localKnowledgeAnswer(requestedQuery, candidates);
-      setAnswer(local);
-      if (!candidates.length) return;
+      if (!candidates.length) {
+        throw new Error("没有找到足够接近的图谱内容，请粘贴更完整的题干");
+      }
 
       const client = getSupabaseClient();
       const session = client ? (await client.auth.getSession()).data.session : null;
       if (!client || !session) {
-        setAnswer({
-          ...local,
-          warning: "当前使用本地文字检索；登录账号后可由模型进一步判断。",
-        });
-        return;
+        throw new Error("请先登录账号后使用 AI 检索");
       }
 
       const { data, error: invokeError } = await client.functions.invoke("knowledge-search", {
@@ -165,14 +160,6 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
       setAnswer(modelAnswer);
     } catch (reason) {
       if (requestId.current !== currentRequest) return;
-      setAnswer((current) =>
-        current
-          ? {
-              ...current,
-              warning: "模型服务暂时不可用，以下仍是本地图谱检索结果。",
-            }
-          : current,
-      );
       setError(reason instanceof Error ? reason.message : "检索失败，请稍后重试");
     } finally {
       if (requestId.current === currentRequest) setBusy(false);
@@ -221,7 +208,7 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
         {answer && (
           <div className="knowledge-answer" aria-live="polite">
             <div className="knowledge-answer-copy">
-              <span>{answer.localOnly ? "本地匹配" : "模型判断"}</span>
+              <span>模型判断</span>
               <p>{answer.answer}</p>
               {answer.model && <small>{answer.model}</small>}
               {answer.usage && (

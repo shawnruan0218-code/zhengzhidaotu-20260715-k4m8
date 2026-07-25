@@ -67,8 +67,8 @@ npx supabase secrets set \
   --project-ref womuvfxejdjwzcyjvclz
 ```
 
-Edge Function 通过登录用户的 Supabase Session 鉴权。模型服务不可用时，
-网页仍会返回本地匹配结果并保持点击定位功能。
+Edge Function 通过登录用户的 Supabase Session 鉴权。本地召回只用于为模型
+筛选候选，不会显示给用户；未登录或模型服务不可用时，网页会直接给出提示。
 
 ## 数据与隔离说明
 
