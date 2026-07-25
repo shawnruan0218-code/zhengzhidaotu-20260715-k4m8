@@ -99,9 +99,11 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<KnowledgeAnswer | null>(null);
   const [busy, setBusy] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState("");
   const [entryCount, setEntryCount] = useState<number | null>(null);
   const requestId = useRef(0);
+  const searchStartedAt = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -121,7 +123,33 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose, open]);
 
+  useEffect(() => {
+    if (!busy || searchStartedAt.current === null) {
+      setElapsedMs(0);
+      return;
+    }
+    const updateElapsed = () => {
+      if (searchStartedAt.current !== null) {
+        setElapsedMs(Date.now() - searchStartedAt.current);
+      }
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 250);
+    return () => window.clearInterval(timer);
+  }, [busy]);
+
   const canSearch = useMemo(() => query.trim().length >= 2 && !busy, [busy, query]);
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+  const expectedWaitSeconds = 10;
+  const estimatedRemainingSeconds = Math.max(
+    1,
+    Math.ceil(expectedWaitSeconds - elapsedMs / 1000),
+  );
+  const progressPercent = Math.round(
+    elapsedMs <= expectedWaitSeconds * 1000
+      ? 8 + (elapsedMs / (expectedWaitSeconds * 1000)) * 77
+      : Math.min(94, 85 + ((elapsedMs - expectedWaitSeconds * 1000) / 20000) * 9),
+  );
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
@@ -129,6 +157,8 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
     if (requestedQuery.length < 2) return;
     const currentRequest = requestId.current + 1;
     requestId.current = currentRequest;
+    searchStartedAt.current = Date.now();
+    setElapsedMs(0);
     setBusy(true);
     setError("");
     setAnswer(null);
@@ -204,6 +234,31 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
             {busy ? "正在检索…" : "查找对应知识点"}
           </button>
         </form>
+
+        {busy && (
+          <div className="knowledge-progress" aria-live="polite">
+            <div className="knowledge-progress-copy">
+              <strong>
+                {elapsedMs < 1000 ? "正在检索全书文字…" : "正在让模型判断对应知识点…"}
+              </strong>
+              <span>
+                {elapsedMs < expectedWaitSeconds * 1000
+                  ? `预计还需约 ${estimatedRemainingSeconds} 秒`
+                  : `已等待 ${elapsedSeconds} 秒，模型仍在处理`}
+              </span>
+            </div>
+            <div
+              className="knowledge-progress-track"
+              role="progressbar"
+              aria-label="AI 检索预计进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressPercent}
+            >
+              <span style={{ width: `${progressPercent}%` }} />
+            </div>
+          </div>
+        )}
 
         {answer && (
           <div className="knowledge-answer" aria-live="polite">
