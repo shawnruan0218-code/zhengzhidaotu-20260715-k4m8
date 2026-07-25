@@ -12,7 +12,9 @@ import {
   useState,
 } from "react";
 import { AccountControls } from "./account-controls";
+import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
+import type { KnowledgeEntry } from "./lib/knowledge-search";
 import {
   EPOCH_TIMESTAMP,
   nextIsoTimestamp,
@@ -650,6 +652,10 @@ export function StudyReader() {
   const [showSummaries, setShowSummaries] = useState(true);
   const [summaryOnly, setSummaryOnly] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
+  const [knowledgeLocator, setKnowledgeLocator] = useState<
+    (KnowledgeEntry & { animationId: number }) | null
+  >(null);
   const [expandedOutlineRoots, setExpandedOutlineRoots] = useState<Set<string>>(() => new Set());
   const [expandedOutlineSections, setExpandedOutlineSections] = useState<Set<string>>(() => new Set());
   const [panKeyHeld, setPanKeyHeld] = useState(false);
@@ -662,6 +668,7 @@ export function StudyReader() {
   const viewerRef = useRef<HTMLElement | null>(null);
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const knowledgeLocatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedEntryGroup = useRef<string[]>([]);
   const pendingClipboardText = useRef<string | null>(null);
   const clipboardWriteInFlight = useRef(false);
@@ -894,6 +901,7 @@ export function StudyReader() {
     () => () => {
       if (wheelZoomFrame.current !== null) cancelAnimationFrame(wheelZoomFrame.current);
       if (wheelZoomEndTimer.current) clearTimeout(wheelZoomEndTimer.current);
+      if (knowledgeLocatorTimer.current) clearTimeout(knowledgeLocatorTimer.current);
       viewerRef.current?.classList.remove("wheel-zooming");
     },
     [],
@@ -1188,6 +1196,55 @@ export function StudyReader() {
       }
     },
     [mode],
+  );
+
+  const locateKnowledgeEntry = useCallback(
+    (entry: KnowledgeEntry) => {
+      setFocusOnly(false);
+      setSummaryOnly(false);
+      setShowSummaries(true);
+      loadOcrPage(entry.page);
+      goToPage(entry.page, "auto");
+
+      if (knowledgeLocatorTimer.current) clearTimeout(knowledgeLocatorTimer.current);
+      setKnowledgeLocator({ ...entry, animationId: Date.now() });
+      knowledgeLocatorTimer.current = setTimeout(() => setKnowledgeLocator(null), 3_150);
+
+      const centerTarget = () => {
+        const viewer = viewerRef.current;
+        const article = pageRefs.current[entry.page];
+        const sheet = article?.querySelector<HTMLElement>(".page-sheet");
+        if (!viewer || !sheet) return false;
+
+        const viewerRect = viewer.getBoundingClientRect();
+        const sheetRect = sheet.getBoundingClientRect();
+        const targetLeft =
+          viewer.scrollLeft +
+          sheetRect.left -
+          viewerRect.left +
+          sheetRect.width * (entry.x + entry.width / 2) -
+          viewer.clientWidth / 2;
+        const targetTop =
+          viewer.scrollTop +
+          sheetRect.top -
+          viewerRect.top +
+          sheetRect.height * (entry.y + entry.height / 2) -
+          viewer.clientHeight / 2;
+        viewer.scrollTo({
+          left: Math.max(0, targetLeft),
+          top: Math.max(0, targetTop),
+          behavior: "smooth",
+        });
+        return true;
+      };
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!centerTarget()) setTimeout(centerTarget, 180);
+        });
+      });
+    },
+    [goToPage, loadOcrPage],
   );
 
   const activeOutlineRoot = useMemo(() => {
@@ -1981,6 +2038,16 @@ export function StudyReader() {
           大纲
         </button>
 
+        <button
+          type="button"
+          className={`knowledge-toggle ${knowledgeSearchOpen ? "active" : ""}`}
+          aria-haspopup="dialog"
+          onClick={() => setKnowledgeSearchOpen(true)}
+        >
+          <span className="knowledge-toggle-icon" aria-hidden="true" />
+          AI 检索
+        </button>
+
         <div className="toolbar-group version-controls" aria-label="复习版本">
           <span className="version-label">版本</span>
           <select
@@ -2305,6 +2372,12 @@ export function StudyReader() {
         </>
       )}
 
+      <KnowledgeSearchPanel
+        open={knowledgeSearchOpen}
+        onClose={() => setKnowledgeSearchOpen(false)}
+        onLocate={locateKnowledgeEntry}
+      />
+
       <section
         ref={viewerRef}
         className={`reader-viewport mode-${mode} interaction-${interactionMode} ${zoomMode ? "zoom-enabled" : ""} ${panKeyHeld ? "pan-ready" : ""} ${isPanning ? "pan-dragging" : ""}`}
@@ -2444,6 +2517,20 @@ export function StudyReader() {
                         />
                       ))}
                     </div>
+                  )}
+
+                  {knowledgeLocator?.page === page.number && (
+                    <span
+                      key={knowledgeLocator.animationId}
+                      className="knowledge-locator"
+                      aria-hidden="true"
+                      style={{
+                        left: `${Math.max(0, knowledgeLocator.x - 0.004) * 100}%`,
+                        top: `${Math.max(0, knowledgeLocator.y - 0.005) * 100}%`,
+                        width: `${Math.min(1 - knowledgeLocator.x, knowledgeLocator.width + 0.008) * 100}%`,
+                        height: `${Math.min(1 - knowledgeLocator.y, knowledgeLocator.height + 0.01) * 100}%`,
+                      }}
+                    />
                   )}
 
                   <div className="persistent-highlights" aria-hidden="true">
