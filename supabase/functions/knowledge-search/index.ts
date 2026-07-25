@@ -40,6 +40,15 @@ function extractJson(value: string) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
+function tokenPrice(model: string, promptTokens: number) {
+  if (model === "Qwen/Qwen3.5-35B-A3B") {
+    return promptTokens < 128_000
+      ? { promptPerMillionCny: 0.4, completionPerMillionCny: 3.2 }
+      : { promptPerMillionCny: 1.6, completionPerMillionCny: 12.8 };
+  }
+  return { promptPerMillionCny: 0, completionPerMillionCny: 0 };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -49,6 +58,7 @@ Deno.serve(async (request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const publishableKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const siliconFlowKey = Deno.env.get("SILICONFLOW_API_KEY");
   const model = Deno.env.get("SILICONFLOW_MODEL") || "Qwen/Qwen3.5-35B-A3B";
   if (!supabaseUrl || !publishableKey) return jsonResponse({ error: "Supabase 配置缺失" }, 500);
@@ -128,27 +138,56 @@ Deno.serve(async (request) => {
           .slice(0, 10)
       : [];
     if (!matches.length) return jsonResponse({ error: "模型未选出有效图谱词条" }, 502);
+    const promptTokens =
+      typeof completion?.usage?.prompt_tokens === "number"
+        ? Math.max(0, Math.round(completion.usage.prompt_tokens))
+        : 0;
+    const completionTokens =
+      typeof completion?.usage?.completion_tokens === "number"
+        ? Math.max(0, Math.round(completion.usage.completion_tokens))
+        : 0;
+    const totalTokens =
+      typeof completion?.usage?.total_tokens === "number"
+        ? Math.max(0, Math.round(completion.usage.total_tokens))
+        : promptTokens + completionTokens;
+    const cachedTokens =
+      typeof completion?.usage?.prompt_cache_hit_tokens === "number"
+        ? Math.max(0, Math.round(completion.usage.prompt_cache_hit_tokens))
+        : 0;
+    const pricing = tokenPrice(model, promptTokens);
+    const estimatedCostCny =
+      (promptTokens * pricing.promptPerMillionCny +
+        completionTokens * pricing.completionPerMillionCny) /
+      1_000_000;
+
+    if (serviceRoleKey) {
+      const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { persistSession: false },
+      });
+      const { error: usageError } = await serviceClient.rpc(
+        "zhengzhidaotu_20260715_k4m8_record_ai_usage",
+        {
+          p_user_id: authData.user.id,
+          p_prompt_tokens: promptTokens,
+          p_completion_tokens: completionTokens,
+          p_total_tokens: totalTokens,
+          p_cached_tokens: cachedTokens,
+          p_estimated_cost_cny: estimatedCostCny,
+          p_model: model,
+        },
+      );
+      if (usageError) console.error("Failed to record account usage", usageError.message);
+    }
+
     return jsonResponse({
       answer: typeof parsed.answer === "string" ? parsed.answer : "已找到对应知识点。",
       matches,
       model,
       usage: {
-        promptTokens:
-          typeof completion?.usage?.prompt_tokens === "number"
-            ? completion.usage.prompt_tokens
-            : 0,
-        completionTokens:
-          typeof completion?.usage?.completion_tokens === "number"
-            ? completion.usage.completion_tokens
-            : 0,
-        totalTokens:
-          typeof completion?.usage?.total_tokens === "number"
-            ? completion.usage.total_tokens
-            : 0,
-        cachedTokens:
-          typeof completion?.usage?.prompt_cache_hit_tokens === "number"
-            ? completion.usage.prompt_cache_hit_tokens
-            : 0,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        cachedTokens,
       },
     });
   } catch (error) {
