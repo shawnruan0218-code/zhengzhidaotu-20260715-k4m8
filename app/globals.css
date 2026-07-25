@@ -1457,9 +1457,10 @@ kbd {
 }
 
 .knowledge-answer-copy {
+  margin-top: 10px;
   padding: 13px 14px;
-  background: rgba(0, 122, 255, 0.065);
-  border: 1px solid rgba(0, 122, 255, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(60, 60, 67, 0.1);
   border-radius: 15px;
 }
 
@@ -1511,7 +1512,30 @@ kbd {
 .knowledge-results {
   display: grid;
   gap: 7px;
-  margin-top: 10px;
+  padding: 12px;
+  background: rgba(0, 122, 255, 0.065);
+  border: 1px solid rgba(0, 122, 255, 0.12);
+  border-radius: 15px;
+}
+
+.knowledge-results-header {
+  display: flex;
+  padding: 0 2px 3px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-results-header strong {
+  color: var(--apple-blue);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.knowledge-results-header span {
+  color: #6e6e73;
+  font-size: 9px;
+  font-weight: 580;
 }
 
 .knowledge-result {
@@ -1523,8 +1547,8 @@ kbd {
   gap: 8px;
   color: var(--ink);
   text-align: left;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(60, 60, 67, 0.1);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(0, 122, 255, 0.1);
   border-radius: 14px;
   cursor: pointer;
   transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;

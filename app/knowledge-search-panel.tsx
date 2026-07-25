@@ -262,22 +262,11 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
 
         {answer && (
           <div className="knowledge-answer" aria-live="polite">
-            <div className="knowledge-answer-copy">
-              <span>模型判断</span>
-              <p>{answer.answer}</p>
-              {answer.model && <small>{answer.model}</small>}
-              {answer.usage && (
-                <small className="knowledge-token-usage">
-                  本次消耗：输入 {answer.usage.promptTokens.toLocaleString("zh-CN")} ·
-                  输出 {answer.usage.completionTokens.toLocaleString("zh-CN")} ·
-                  合计 {answer.usage.totalTokens.toLocaleString("zh-CN")} Tokens
-                  {answer.usage.cachedTokens > 0 &&
-                    ` · 缓存命中 ${answer.usage.cachedTokens.toLocaleString("zh-CN")}`}
-                </small>
-              )}
-            </div>
-            {answer.warning && <p className="knowledge-warning">{answer.warning}</p>}
             <div className="knowledge-results">
+              <div className="knowledge-results-header">
+                <strong>对应考点</strong>
+                <span>{answer.matches.length} 项</span>
+              </div>
               {answer.matches.map((match, index) => (
                 <button
                   type="button"
@@ -302,6 +291,21 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
                 </button>
               ))}
             </div>
+            <div className="knowledge-answer-copy">
+              <span>模型判断</span>
+              <p>{answer.answer}</p>
+              {answer.model && <small>{answer.model}</small>}
+              {answer.usage && (
+                <small className="knowledge-token-usage">
+                  本次消耗：输入 {answer.usage.promptTokens.toLocaleString("zh-CN")} ·
+                  输出 {answer.usage.completionTokens.toLocaleString("zh-CN")} ·
+                  合计 {answer.usage.totalTokens.toLocaleString("zh-CN")} Tokens
+                  {answer.usage.cachedTokens > 0 &&
+                    ` · 缓存命中 ${answer.usage.cachedTokens.toLocaleString("zh-CN")}`}
+                </small>
+              )}
+            </div>
+            {answer.warning && <p className="knowledge-warning">{answer.warning}</p>}
           </div>
         )}
 
