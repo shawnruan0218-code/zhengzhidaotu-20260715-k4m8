@@ -1,12 +1,49 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { SUPABASE_USAGE_TABLE } from "./lib/app-config";
+import { getSupabaseClient } from "./lib/supabase-client";
 import type { CloudSyncController } from "./lib/use-cloud-sync";
 
 type Props = {
   cloud: CloudSyncController;
 };
+
+type AccountUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens: number;
+  requestCount: number;
+  estimatedCostCny: number;
+  lastModel: string | null;
+};
+
+const EMPTY_USAGE: AccountUsage = {
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+  cachedTokens: 0,
+  requestCount: 0,
+  estimatedCostCny: 0,
+  lastModel: null,
+};
+
+function toSafeNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.max(0, parsed);
+  }
+  return 0;
+}
+
+function formatCost(value: number): string {
+  if (value === 0) return "¥0.0000";
+  if (value < 0.01) return `¥${value.toFixed(4)}`;
+  return `¥${value.toFixed(2)}`;
+}
 
 function friendlyAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : "操作失败，请稍后重试";
@@ -26,6 +63,54 @@ export function AccountControls({ cloud }: Props) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [usage, setUsage] = useState<AccountUsage>(EMPTY_USAGE);
+  const [usageState, setUsageState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+
+  useEffect(() => {
+    if (!open || !cloud.user) {
+      setUsageState("idle");
+      return;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) return;
+    let cancelled = false;
+    setUsageState("loading");
+
+    void client
+      .from(SUPABASE_USAGE_TABLE)
+      .select(
+        "prompt_tokens,completion_tokens,total_tokens,cached_tokens,request_count,estimated_cost_cny,last_model",
+      )
+      .eq("user_id", cloud.user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          setUsageState("error");
+          return;
+        }
+        if (!data) {
+          setUsage(EMPTY_USAGE);
+          setUsageState("ready");
+          return;
+        }
+        setUsage({
+          promptTokens: toSafeNumber(data.prompt_tokens),
+          completionTokens: toSafeNumber(data.completion_tokens),
+          totalTokens: toSafeNumber(data.total_tokens),
+          cachedTokens: toSafeNumber(data.cached_tokens),
+          requestCount: toSafeNumber(data.request_count),
+          estimatedCostCny: toSafeNumber(data.estimated_cost_cny),
+          lastModel: typeof data.last_model === "string" ? data.last_model : null,
+        });
+        setUsageState("ready");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloud.user, open]);
 
   const close = () => {
     setOpen(false);
@@ -135,6 +220,40 @@ export function AccountControls({ cloud }: Props) {
                   <span>当前账号</span>
                   <strong>{cloud.user.email}</strong>
                 </div>
+                <section className="account-usage" aria-label="AI 检索累计用量">
+                  <div className="account-usage-heading">
+                    <strong>AI 检索累计用量</strong>
+                    <span>自启用统计起</span>
+                  </div>
+                  {usageState === "loading" ? (
+                    <div className="account-usage-loading">正在读取用量…</div>
+                  ) : usageState === "error" ? (
+                    <div className="account-usage-loading">暂时无法读取用量，请稍后重新打开</div>
+                  ) : (
+                    <>
+                      <div className="account-usage-cards">
+                        <div>
+                          <span>总 Token</span>
+                          <strong>{Math.round(usage.totalTokens).toLocaleString("zh-CN")}</strong>
+                        </div>
+                        <div>
+                          <span>估算总费用</span>
+                          <strong>{formatCost(usage.estimatedCostCny)}</strong>
+                        </div>
+                      </div>
+                      <p className="account-usage-detail">
+                        输入 {Math.round(usage.promptTokens).toLocaleString("zh-CN")}
+                        {" · "}
+                        输出 {Math.round(usage.completionTokens).toLocaleString("zh-CN")}
+                        {" · "}
+                        {Math.round(usage.requestCount).toLocaleString("zh-CN")} 次检索
+                      </p>
+                      <small>
+                        按每次请求发生时的模型单价估算；平台优惠、代金券和后续调价可能导致账单不同。
+                      </small>
+                    </>
+                  )}
+                </section>
                 <p className="account-sync-detail">
                   {cloud.statusText}
                   {cloud.lastSyncAt && ` · 最近同步 ${new Date(cloud.lastSyncAt).toLocaleString("zh-CN")}`}

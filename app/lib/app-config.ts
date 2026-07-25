@@ -2,6 +2,7 @@ export const APP_NAMESPACE = "zhengzhidaotu_20260715_k4m8";
 export const APP_SLUG = "zhengzhidaotu-20260715-k4m8";
 export const SUPABASE_PROJECT_NAME = APP_SLUG;
 export const SUPABASE_TABLE = `${APP_NAMESPACE}_items`;
+export const SUPABASE_USAGE_TABLE = `${APP_NAMESPACE}_ai_usage`;
 export const GITHUB_REPOSITORY = APP_SLUG;
 
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";

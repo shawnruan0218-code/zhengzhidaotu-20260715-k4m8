@@ -51,6 +51,24 @@ test("database grants and each RLS operation are scoped to auth.uid", async () =
   }
 });
 
+test("AI usage totals are account-scoped and browser clients cannot modify them", async () => {
+  const sql = await source("supabase/migrations/20260725180000_zhengzhidaotu_ai_usage.sql");
+  assert.match(sql, new RegExp(`public\\.${namespace}_ai_usage`));
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /grant select[\s\S]*to authenticated/i);
+  assert.doesNotMatch(sql, /grant (?:insert|update|delete|all)[\s\S]*to authenticated/i);
+  assert.match(
+    sql,
+    /for select[\s\S]*?to authenticated[\s\S]*?auth\.uid\(\)\) = user_id/i,
+  );
+  assert.match(sql, /security definer/i);
+  assert.match(
+    sql,
+    /revoke all on function[\s\S]*from public, anon, authenticated/i,
+  );
+  assert.match(sql, /grant execute on function[\s\S]*to service_role/i);
+});
+
 test("only the public Supabase browser variables are referenced", async () => {
   const [client, env, workflow] = await Promise.all([
     source("app/lib/supabase-client.ts"),
