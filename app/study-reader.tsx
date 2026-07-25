@@ -1609,6 +1609,24 @@ export function StudyReader() {
 
       if (
         !isTyping &&
+        !activeEntryId &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "a" &&
+        !document.querySelector(".account-sheet")
+      ) {
+        event.preventDefault();
+        if (!event.repeat) {
+          setFloatingNoteEntryId(null);
+          setOutlineOpen(false);
+          setKnowledgeSearchOpen(true);
+        }
+        return;
+      }
+
+      if (
+        !isTyping &&
         (event.metaKey || event.ctrlKey) &&
         !event.shiftKey &&
         event.key.toLowerCase() === "z"
@@ -2043,9 +2061,11 @@ export function StudyReader() {
           className={`knowledge-toggle ${knowledgeSearchOpen ? "active" : ""}`}
           aria-haspopup="dialog"
           onClick={() => setKnowledgeSearchOpen(true)}
+          title="快捷键 A"
         >
           <span className="knowledge-toggle-icon" aria-hidden="true" />
           AI 检索
+          <span className="knowledge-shortcut" aria-label="快捷键 A">A</span>
         </button>
 
         <div className="toolbar-group version-controls" aria-label="复习版本">
