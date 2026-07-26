@@ -2512,11 +2512,15 @@ kbd {
 .annotation-history-content {
   min-height: 0;
   flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .annotation-history-content .annotation-calendar {
   display: grid;
-  height: 100%;
+  min-height: 100%;
+  height: auto;
   margin: 0;
   padding: 22px 2px 0;
   grid-template-areas:
@@ -2524,7 +2528,7 @@ kbd {
     "grid records"
     "undated undated";
   grid-template-columns: minmax(360px, 0.88fr) minmax(420px, 1.12fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(390px, 1fr) auto;
   column-gap: 28px;
   background: transparent;
   border: 0;
@@ -2698,7 +2702,8 @@ kbd {
 }
 
 .annotation-history-content .annotation-undated[open] .annotation-record-list {
-  max-height: 180px;
+  max-height: none;
+  overflow: visible;
 }
 
 .account-usage-heading {
@@ -3166,7 +3171,8 @@ kbd {
   }
 
   .annotation-history-content .annotation-undated[open] .annotation-record-list {
-    max-height: 360px;
+    max-height: none;
+    overflow: visible;
   }
 }
 
