@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { AccountControls } from "./account-controls";
+import { AnnotationHistoryDialog } from "./annotation-history-dialog";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
@@ -709,6 +710,7 @@ export function StudyReader() {
   const [summaryOnly, setSummaryOnly] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
+  const [annotationHistoryOpen, setAnnotationHistoryOpen] = useState(false);
   const [knowledgeLocator, setKnowledgeLocator] = useState<
     (KnowledgeEntry & { animationId: number }) | null
   >(null);
@@ -1745,6 +1747,20 @@ export function StudyReader() {
         return;
       }
 
+      if (annotationHistoryOpen) {
+        const isHistoryToggle =
+          !isTyping &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === "h";
+        if (event.key === "Escape" || isHistoryToggle) {
+          event.preventDefault();
+          setAnnotationHistoryOpen(false);
+        }
+        return;
+      }
+
       if (event.key === "Escape" && outlineOpen) {
         event.preventDefault();
         setOutlineOpen(false);
@@ -1776,6 +1792,24 @@ export function StudyReader() {
           setFloatingNoteEntryId(null);
           setOutlineOpen(false);
           setKnowledgeSearchOpen(true);
+        }
+        return;
+      }
+
+      if (
+        !isTyping &&
+        !activeEntryId &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "h" &&
+        !document.querySelector(".account-sheet, .knowledge-sheet")
+      ) {
+        event.preventDefault();
+        if (!event.repeat) {
+          setFloatingNoteEntryId(null);
+          setOutlineOpen(false);
+          setAnnotationHistoryOpen((current) => !current);
         }
         return;
       }
@@ -1944,6 +1978,7 @@ export function StudyReader() {
   }, [
     activeEntryId,
     addSelectionHighlight,
+    annotationHistoryOpen,
     closeAnnotation,
     commitZoom,
     commitPendingHighlight,
@@ -2597,6 +2632,13 @@ export function StudyReader() {
         open={knowledgeSearchOpen}
         onClose={() => setKnowledgeSearchOpen(false)}
         onLocate={locateKnowledgeEntry}
+      />
+
+      <AnnotationHistoryDialog
+        open={annotationHistoryOpen}
+        records={annotationRecords}
+        onClose={() => setAnnotationHistoryOpen(false)}
+        onJump={jumpToAnnotation}
       />
 
       <section
