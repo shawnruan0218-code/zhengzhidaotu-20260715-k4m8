@@ -18,6 +18,7 @@ import type { KnowledgeEntry } from "./lib/knowledge-search";
 import {
   EPOCH_TIMESTAMP,
   nextIsoTimestamp,
+  type AnnotationRecord,
   type StoredLibrary,
   type StoredSettings,
   type StudyVersion,
@@ -83,6 +84,18 @@ type SummaryRegion = {
   height: number;
 };
 
+type LocatorRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type AnnotationLocator = LocatorRect & {
+  page: number;
+  animationId: number;
+};
+
 type StateUpdate<T> = T | ((current: T) => T);
 
 type PageMetadata = {
@@ -126,6 +139,26 @@ function localDayKey(value: string | number | Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function entryPageFromId(entryId: string) {
+  const match = entryId.match(/(?:^|-)p(\d+)(?:-|$)/);
+  if (!match) return 0;
+  const page = Number(match[1]);
+  return Number.isInteger(page) ? page : 0;
+}
+
+function knowledgeFocusRect(entry: KnowledgeEntry): LocatorRect {
+  const values = [entry.focusX, entry.focusY, entry.focusWidth, entry.focusHeight];
+  if (values.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return {
+      x: entry.focusX as number,
+      y: entry.focusY as number,
+      width: entry.focusWidth as number,
+      height: entry.focusHeight as number,
+    };
+  }
+  return { x: entry.x, y: entry.y, width: entry.width, height: entry.height };
 }
 
 function normalizeStoredVersion(value: unknown): StudyVersion | null {
@@ -679,6 +712,11 @@ export function StudyReader() {
   const [knowledgeLocator, setKnowledgeLocator] = useState<
     (KnowledgeEntry & { animationId: number }) | null
   >(null);
+  const [annotationLocator, setAnnotationLocator] = useState<AnnotationLocator | null>(null);
+  const [pendingAnnotationJump, setPendingAnnotationJump] = useState<{
+    entryId: string;
+    page: number;
+  } | null>(null);
   const [expandedOutlineRoots, setExpandedOutlineRoots] = useState<Set<string>>(() => new Set());
   const [expandedOutlineSections, setExpandedOutlineSections] = useState<Set<string>>(() => new Set());
   const [panKeyHeld, setPanKeyHeld] = useState(false);
@@ -692,6 +730,7 @@ export function StudyReader() {
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const knowledgeLocatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const annotationLocatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedEntryGroup = useRef<string[]>([]);
   const pendingClipboardText = useRef<string | null>(null);
   const clipboardWriteInFlight = useRef(false);
@@ -916,6 +955,7 @@ export function StudyReader() {
       if (wheelZoomFrame.current !== null) cancelAnimationFrame(wheelZoomFrame.current);
       if (wheelZoomEndTimer.current) clearTimeout(wheelZoomEndTimer.current);
       if (knowledgeLocatorTimer.current) clearTimeout(knowledgeLocatorTimer.current);
+      if (annotationLocatorTimer.current) clearTimeout(annotationLocatorTimer.current);
       viewerRef.current?.classList.remove("wheel-zooming");
     },
     [],
@@ -937,6 +977,23 @@ export function StudyReader() {
     loadOcrPage(currentPage - 2);
     loadOcrPage(currentPage + 2);
   }, [currentPage, loadOcrPage]);
+
+  const annotatedPageNumbers = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          versions
+            .flatMap((version) => Object.keys(version.notes))
+            .map(entryPageFromId)
+            .filter((page) => page >= 1 && page <= PAGES.length),
+        ),
+      ),
+    [versions],
+  );
+
+  useEffect(() => {
+    annotatedPageNumbers.forEach(loadOcrPage);
+  }, [annotatedPageNumbers, loadOcrPage]);
 
   useEffect(() => {
     if (mode !== "scroll" || !viewerRef.current) return;
@@ -1230,6 +1287,96 @@ export function StudyReader() {
     [mode],
   );
 
+  const centerPageRect = useCallback((page: number, rect: LocatorRect) => {
+    const viewer = viewerRef.current;
+    const article = pageRefs.current[page];
+    const sheet = article?.querySelector<HTMLElement>(".page-sheet");
+    if (!viewer || !sheet) return false;
+
+    const viewerRect = viewer.getBoundingClientRect();
+    const sheetRect = sheet.getBoundingClientRect();
+    const targetLeft =
+      viewer.scrollLeft +
+      sheetRect.left -
+      viewerRect.left +
+      sheetRect.width * (rect.x + rect.width / 2) -
+      viewer.clientWidth / 2;
+    const targetTop =
+      viewer.scrollTop +
+      sheetRect.top -
+      viewerRect.top +
+      sheetRect.height * (rect.y + rect.height / 2) -
+      viewer.clientHeight / 2;
+    viewer.scrollTo({
+      left: Math.max(0, targetLeft),
+      top: Math.max(0, targetTop),
+      behavior: "smooth",
+    });
+    return true;
+  }, []);
+
+  const revealAnnotationEntry = useCallback(
+    (entry: EntryBlock) => {
+      if (annotationLocatorTimer.current) clearTimeout(annotationLocatorTimer.current);
+      setAnnotationLocator({
+        page: entry.page,
+        x: entry.x,
+        y: entry.y,
+        width: entry.width,
+        height: entry.height,
+        animationId: Date.now(),
+      });
+      annotationLocatorTimer.current = setTimeout(() => setAnnotationLocator(null), 3_150);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!centerPageRect(entry.page, entry)) {
+            setTimeout(() => centerPageRect(entry.page, entry), 180);
+          }
+        });
+      });
+    },
+    [centerPageRect],
+  );
+
+  const jumpToAnnotation = useCallback(
+    (record: AnnotationRecord) => {
+      if (record.versionId !== activeVersionId) selectVersion(record.versionId);
+      setFocusOnly(false);
+      setSummaryOnly(false);
+      setShowSummaries(true);
+      setInteractionMode("entry");
+      loadOcrPage(record.page);
+      goToPage(record.page, "auto");
+
+      const entry = entriesById.get(record.entryId);
+      if (entry) {
+        setPendingAnnotationJump(null);
+        revealAnnotationEntry(entry);
+      } else {
+        setPendingAnnotationJump({ entryId: record.entryId, page: record.page });
+      }
+      showToast(`正在定位第 ${record.page} 页批注`);
+    },
+    [
+      activeVersionId,
+      entriesById,
+      goToPage,
+      loadOcrPage,
+      revealAnnotationEntry,
+      selectVersion,
+      showToast,
+    ],
+  );
+
+  useEffect(() => {
+    if (!pendingAnnotationJump) return;
+    const entry = entriesById.get(pendingAnnotationJump.entryId);
+    if (!entry) return;
+    setPendingAnnotationJump(null);
+    revealAnnotationEntry(entry);
+  }, [entriesById, pendingAnnotationJump, revealAnnotationEntry]);
+
   const locateKnowledgeEntry = useCallback(
     (entry: KnowledgeEntry) => {
       setFocusOnly(false);
@@ -1243,31 +1390,7 @@ export function StudyReader() {
       knowledgeLocatorTimer.current = setTimeout(() => setKnowledgeLocator(null), 3_150);
 
       const centerTarget = () => {
-        const viewer = viewerRef.current;
-        const article = pageRefs.current[entry.page];
-        const sheet = article?.querySelector<HTMLElement>(".page-sheet");
-        if (!viewer || !sheet) return false;
-
-        const viewerRect = viewer.getBoundingClientRect();
-        const sheetRect = sheet.getBoundingClientRect();
-        const targetLeft =
-          viewer.scrollLeft +
-          sheetRect.left -
-          viewerRect.left +
-          sheetRect.width * (entry.x + entry.width / 2) -
-          viewer.clientWidth / 2;
-        const targetTop =
-          viewer.scrollTop +
-          sheetRect.top -
-          viewerRect.top +
-          sheetRect.height * (entry.y + entry.height / 2) -
-          viewer.clientHeight / 2;
-        viewer.scrollTo({
-          left: Math.max(0, targetLeft),
-          top: Math.max(0, targetTop),
-          behavior: "smooth",
-        });
-        return true;
+        return centerPageRect(entry.page, entry);
       };
 
       requestAnimationFrame(() => {
@@ -1276,7 +1399,7 @@ export function StudyReader() {
         });
       });
     },
-    [goToPage, loadOcrPage],
+    [centerPageRect, goToPage, loadOcrPage],
   );
 
   const activeOutlineRoot = useMemo(() => {
@@ -2080,10 +2203,41 @@ export function StudyReader() {
     );
   }, [versions]);
 
+  const annotationRecords = useMemo(
+    () =>
+      versions
+        .flatMap((version) =>
+          Object.entries(version.notes).flatMap(([entryId, note]) => {
+            const entry = entriesById.get(entryId);
+            const page = entry?.page ?? entryPageFromId(entryId);
+            if (!page) return [];
+            return [{
+              id: `${version.id}::${entryId}`,
+              versionId: version.id,
+              versionName: version.name,
+              entryId,
+              page,
+              entryText: entry?.text.trim() || `第 ${page} 页批注条目`,
+              note,
+              createdAt: version.noteCreatedAt[entryId] ?? null,
+            } satisfies AnnotationRecord];
+          }),
+        )
+        .sort((left, right) =>
+          (right.createdAt ?? "").localeCompare(left.createdAt ?? ""),
+        ),
+    [entriesById, versions],
+  );
+
   return (
     <main className="reader-shell">
       <header className="reader-toolbar" aria-label="复习工具栏">
-        <AccountControls cloud={cloud} annotationStats={annotationStats} />
+        <AccountControls
+          cloud={cloud}
+          annotationStats={annotationStats}
+          annotationRecords={annotationRecords}
+          onJumpToAnnotation={jumpToAnnotation}
+        />
 
         <div className="toolbar-lanes">
           <div className="toolbar-row toolbar-primary-row">
@@ -2586,16 +2740,54 @@ export function StudyReader() {
                     </div>
                   )}
 
-                  {knowledgeLocator?.page === page.number && (
+                  {knowledgeLocator?.page === page.number && (() => {
+                    const focusRect = knowledgeFocusRect(knowledgeLocator);
+                    const contextPaddingX = knowledgeLocator.kind === "line" ? 0.012 : 0.004;
+                    const contextPaddingY = knowledgeLocator.kind === "line" ? 0.012 : 0.005;
+                    return (
+                      <>
+                        <span
+                          key={`${knowledgeLocator.animationId}-context`}
+                          className="knowledge-locator knowledge-locator-context"
+                          aria-hidden="true"
+                          style={{
+                            left: `${Math.max(0, knowledgeLocator.x - contextPaddingX) * 100}%`,
+                            top: `${Math.max(0, knowledgeLocator.y - contextPaddingY) * 100}%`,
+                            width: `${Math.min(
+                              1 - Math.max(0, knowledgeLocator.x - contextPaddingX),
+                              knowledgeLocator.width + contextPaddingX * 2,
+                            ) * 100}%`,
+                            height: `${Math.min(
+                              1 - Math.max(0, knowledgeLocator.y - contextPaddingY),
+                              knowledgeLocator.height + contextPaddingY * 2,
+                            ) * 100}%`,
+                          }}
+                        />
+                        <span
+                          key={`${knowledgeLocator.animationId}-detail`}
+                          className="knowledge-locator-detail"
+                          aria-hidden="true"
+                          style={{
+                            left: `${Math.max(0, focusRect.x - 0.0018) * 100}%`,
+                            top: `${Math.max(0, focusRect.y - 0.0025) * 100}%`,
+                            width: `${Math.min(1 - focusRect.x, focusRect.width + 0.0036) * 100}%`,
+                            height: `${Math.min(1 - focusRect.y, focusRect.height + 0.005) * 100}%`,
+                          }}
+                        />
+                      </>
+                    );
+                  })()}
+
+                  {annotationLocator?.page === page.number && (
                     <span
-                      key={knowledgeLocator.animationId}
-                      className="knowledge-locator"
+                      key={annotationLocator.animationId}
+                      className="annotation-locator"
                       aria-hidden="true"
                       style={{
-                        left: `${Math.max(0, knowledgeLocator.x - 0.004) * 100}%`,
-                        top: `${Math.max(0, knowledgeLocator.y - 0.005) * 100}%`,
-                        width: `${Math.min(1 - knowledgeLocator.x, knowledgeLocator.width + 0.008) * 100}%`,
-                        height: `${Math.min(1 - knowledgeLocator.y, knowledgeLocator.height + 0.01) * 100}%`,
+                        left: `${Math.max(0, annotationLocator.x - 0.003) * 100}%`,
+                        top: `${Math.max(0, annotationLocator.y - 0.004) * 100}%`,
+                        width: `${Math.min(1 - annotationLocator.x, annotationLocator.width + 0.006) * 100}%`,
+                        height: `${Math.min(1 - annotationLocator.y, annotationLocator.height + 0.008) * 100}%`,
                       }}
                     />
                   )}

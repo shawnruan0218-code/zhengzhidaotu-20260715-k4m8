@@ -2,8 +2,10 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { AnnotationCalendar } from "./annotation-calendar";
 import { SUPABASE_USAGE_TABLE } from "./lib/app-config";
 import { getSupabaseClient } from "./lib/supabase-client";
+import type { AnnotationRecord } from "./lib/study-types";
 import type { CloudSyncController } from "./lib/use-cloud-sync";
 
 type Props = {
@@ -12,6 +14,8 @@ type Props = {
     today: number;
     total: number;
   };
+  annotationRecords: AnnotationRecord[];
+  onJumpToAnnotation: (record: AnnotationRecord) => void;
 };
 
 type AccountUsage = {
@@ -60,8 +64,14 @@ function friendlyAuthError(error: unknown): string {
   return message;
 }
 
-export function AccountControls({ cloud, annotationStats }: Props) {
+export function AccountControls({
+  cloud,
+  annotationStats,
+  annotationRecords,
+  onJumpToAnnotation,
+}: Props) {
   const [open, setOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [panel, setPanel] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -170,6 +180,11 @@ export function AccountControls({ cloud, annotationStats }: Props) {
     }
   };
 
+  const handleAnnotationJump = (record: AnnotationRecord) => {
+    close();
+    onJumpToAnnotation(record);
+  };
+
   return (
     <>
       <div className="account-entry" aria-label="账号和云同步">
@@ -239,6 +254,21 @@ export function AccountControls({ cloud, annotationStats }: Props) {
                       <strong>{annotationStats.total.toLocaleString("zh-CN")}</strong>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="account-annotation-calendar-toggle"
+                    aria-expanded={calendarOpen}
+                    onClick={() => setCalendarOpen((current) => !current)}
+                  >
+                    <span>{calendarOpen ? "收起批注日历" : "按日历查看批注记录"}</span>
+                    <i aria-hidden="true">{calendarOpen ? "⌃" : "⌄"}</i>
+                  </button>
+                  {calendarOpen && (
+                    <AnnotationCalendar
+                      records={annotationRecords}
+                      onJump={handleAnnotationJump}
+                    />
+                  )}
                   <small>累计数包含原有批注；今日新增从统计功能启用后开始记录。</small>
                 </section>
                 <section className="account-usage" aria-label="AI 检索累计用量">

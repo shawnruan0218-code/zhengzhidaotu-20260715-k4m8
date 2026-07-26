@@ -10,6 +10,17 @@ export type StudyVersion = {
   emphasizedEntries: string[];
 };
 
+export type AnnotationRecord = {
+  id: string;
+  versionId: string;
+  versionName: string;
+  entryId: string;
+  page: number;
+  entryText: string;
+  note: string;
+  createdAt: string | null;
+};
+
 export type StoredLibrary = {
   schemaVersion: 1;
   versions: StudyVersion[];

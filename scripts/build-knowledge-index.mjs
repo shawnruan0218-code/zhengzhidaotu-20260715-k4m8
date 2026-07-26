@@ -139,6 +139,10 @@ function buildKnowledgeAreas(pageEntries) {
       y: Number(y.toFixed(7)),
       width: Number((right - x).toFixed(7)),
       height: Number((bottom - y).toFixed(7)),
+      focusX: anchor.focusX,
+      focusY: anchor.focusY,
+      focusWidth: anchor.focusWidth,
+      focusHeight: anchor.focusHeight,
     }];
   });
 }
@@ -266,6 +270,10 @@ for (const filename of ocrFiles) {
       y: Number(row.y.toFixed(7)),
       width: Number(row.width.toFixed(7)),
       height: Number(row.height.toFixed(7)),
+      focusX: Number(row.x.toFixed(7)),
+      focusY: Number(row.y.toFixed(7)),
+      focusWidth: Number(row.width.toFixed(7)),
+      focusHeight: Number(row.height.toFixed(7)),
     };
   });
   entries.push(...pageEntries, ...buildKnowledgeAreas(pageEntries));
@@ -278,7 +286,7 @@ if (indexedLineCount !== sourceLineCount) {
 }
 
 const payload = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   pageCount: manifest.length,
   entryCount: entries.length,
   sourceLineCount,

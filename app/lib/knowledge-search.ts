@@ -10,6 +10,10 @@ export type KnowledgeEntry = {
   y: number;
   width: number;
   height: number;
+  focusX?: number;
+  focusY?: number;
+  focusWidth?: number;
+  focusHeight?: number;
 };
 
 export type KnowledgeIndex = {

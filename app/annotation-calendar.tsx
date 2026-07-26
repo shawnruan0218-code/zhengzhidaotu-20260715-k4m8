@@ -1,0 +1,189 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { AnnotationRecord } from "./lib/study-types";
+
+type Props = {
+  records: AnnotationRecord[];
+  onJump: (record: AnnotationRecord) => void;
+};
+
+const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+
+function localDayKey(value: string | number | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function monthStart(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function formatSelectedDay(dayKey: string) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  if (!year || !month || !day) return "选择日期";
+  return `${year}年${month}月${day}日`;
+}
+
+export function AnnotationCalendar({ records, onJump }: Props) {
+  const today = useMemo(() => new Date(), []);
+  const todayKey = localDayKey(today);
+  const [month, setMonth] = useState(() => monthStart(today));
+  const [selectedDay, setSelectedDay] = useState(todayKey);
+
+  const recordsByDay = useMemo(() => {
+    const result = new Map<string, AnnotationRecord[]>();
+    records.forEach((record) => {
+      if (!record.createdAt) return;
+      const dayKey = localDayKey(record.createdAt);
+      if (!dayKey) return;
+      result.set(dayKey, [...(result.get(dayKey) ?? []), record]);
+    });
+    result.forEach((items) =>
+      items.sort((left, right) =>
+        (right.createdAt ?? "").localeCompare(left.createdAt ?? ""),
+      ),
+    );
+    return result;
+  }, [records]);
+
+  const undatedRecords = useMemo(
+    () => records.filter((record) => !record.createdAt),
+    [records],
+  );
+  const selectedRecords = recordsByDay.get(selectedDay) ?? [];
+  const year = month.getFullYear();
+  const monthIndex = month.getMonth();
+  const leadingDays = (new Date(year, monthIndex, 1).getDay() + 6) % 7;
+  const dayCount = new Date(year, monthIndex + 1, 0).getDate();
+  const calendarCells = Array.from(
+    { length: Math.ceil((leadingDays + dayCount) / 7) * 7 },
+    (_, index) => {
+      const day = index - leadingDays + 1;
+      if (day < 1 || day > dayCount) return null;
+      const dayKey = localDayKey(new Date(year, monthIndex, day));
+      return {
+        day,
+        dayKey,
+        count: recordsByDay.get(dayKey)?.length ?? 0,
+      };
+    },
+  );
+
+  const chooseToday = () => {
+    setMonth(monthStart(today));
+    setSelectedDay(todayKey);
+  };
+
+  const changeMonth = (offset: number) => {
+    const next = new Date(year, monthIndex + offset, 1);
+    setMonth(next);
+    setSelectedDay(localDayKey(next));
+  };
+
+  return (
+    <div className="annotation-calendar">
+      <header className="annotation-calendar-header">
+        <div>
+          <strong>{year}年{monthIndex + 1}月</strong>
+          <span>点击有数字的日期查看批注</span>
+        </div>
+        <div className="annotation-calendar-nav">
+          <button type="button" aria-label="上个月" onClick={() => changeMonth(-1)}>‹</button>
+          <button type="button" onClick={chooseToday}>今天</button>
+          <button type="button" aria-label="下个月" onClick={() => changeMonth(1)}>›</button>
+        </div>
+      </header>
+
+      <div className="annotation-calendar-grid" aria-label={`${year}年${monthIndex + 1}月批注日历`}>
+        {WEEKDAYS.map((weekday) => (
+          <span className="annotation-weekday" key={weekday}>{weekday}</span>
+        ))}
+        {calendarCells.map((cell, index) =>
+          cell ? (
+            <button
+              type="button"
+              className={[
+                "annotation-calendar-day",
+                cell.dayKey === selectedDay ? "is-selected" : "",
+                cell.dayKey === todayKey ? "is-today" : "",
+                cell.count ? "has-records" : "",
+              ].filter(Boolean).join(" ")}
+              aria-label={`${cell.day}日${cell.count ? `，${cell.count}条批注` : "，无批注"}`}
+              aria-pressed={cell.dayKey === selectedDay}
+              key={cell.dayKey}
+              onClick={() => setSelectedDay(cell.dayKey)}
+            >
+              <span>{cell.day}</span>
+              {cell.count > 0 && <i>{cell.count}</i>}
+            </button>
+          ) : (
+            <span className="annotation-calendar-empty" key={`empty-${index}`} />
+          ),
+        )}
+      </div>
+
+      <section className="annotation-day-records" aria-label={`${formatSelectedDay(selectedDay)}批注记录`}>
+        <header>
+          <strong>{formatSelectedDay(selectedDay)}</strong>
+          <span>{selectedRecords.length} 条</span>
+        </header>
+        {selectedRecords.length ? (
+          <div className="annotation-record-list">
+            {selectedRecords.map((record) => (
+              <button
+                type="button"
+                className="annotation-record"
+                key={record.id}
+                onClick={() => onJump(record)}
+              >
+                <span className="annotation-record-title">
+                  <strong>{record.entryText}</strong>
+                  <i>第 {record.page} 页 ›</i>
+                </span>
+                <p>{record.note}</p>
+                <small>
+                  {record.versionName}
+                  {record.createdAt &&
+                    ` · ${new Date(record.createdAt).toLocaleTimeString("zh-CN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}`}
+                </small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="annotation-calendar-no-records">这一天没有新增批注</p>
+        )}
+      </section>
+
+      {undatedRecords.length > 0 && (
+        <details className="annotation-undated">
+          <summary>历史批注（日期未记录） · {undatedRecords.length} 条</summary>
+          <div className="annotation-record-list">
+            {undatedRecords.map((record) => (
+              <button
+                type="button"
+                className="annotation-record"
+                key={record.id}
+                onClick={() => onJump(record)}
+              >
+                <span className="annotation-record-title">
+                  <strong>{record.entryText}</strong>
+                  <i>第 {record.page} 页 ›</i>
+                </span>
+                <p>{record.note}</p>
+                <small>{record.versionName}</small>
+              </button>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}

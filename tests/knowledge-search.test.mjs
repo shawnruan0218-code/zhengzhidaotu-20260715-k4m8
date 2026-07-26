@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   localKnowledgeAnswer,
   rankKnowledgeCandidates,
   rankKnowledgeEntries,
 } from "../app/lib/knowledge-search.ts";
+
+const builtKnowledgeIndex = JSON.parse(
+  readFileSync(new URL("../public/data/knowledge-index.json", import.meta.url), "utf8"),
+);
 
 const entries = [
   {
@@ -76,4 +81,20 @@ test("multi-line queries preserve candidates for each independent item", () => {
     10,
   );
   assert.deepEqual(new Set(matches.map((match) => match.id)), new Set(["p12", "p13", "p14", "p15"]));
+});
+
+test("area matches preserve a smaller exact-entry locator", () => {
+  assert.equal(builtKnowledgeIndex.schemaVersion, 2);
+  const area = builtKnowledgeIndex.entries.find(
+    (entry) =>
+      entry.kind === "area" &&
+      entry.focusWidth > 0 &&
+      entry.focusHeight > 0 &&
+      (entry.focusWidth < entry.width || entry.focusHeight < entry.height),
+  );
+  assert.ok(area);
+  assert.ok(area.focusX >= area.x - 0.0000001);
+  assert.ok(area.focusY >= area.y - 0.0000001);
+  assert.ok(area.focusX + area.focusWidth <= area.x + area.width + 0.0000001);
+  assert.ok(area.focusY + area.focusHeight <= area.y + area.height + 0.0000001);
 });
