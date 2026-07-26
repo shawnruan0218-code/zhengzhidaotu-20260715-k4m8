@@ -2501,8 +2501,10 @@ kbd {
 
 .annotation-history-summary kbd {
   display: grid;
-  width: 34px;
+  width: auto;
+  min-width: 48px;
   height: 34px;
+  padding: 0 9px;
   place-items: center;
   color: #7e339f;
   font-family: inherit;

@@ -87,7 +87,7 @@ export function AnnotationHistoryDialog({
               <strong>{datedDayCount.toLocaleString("zh-CN")}</strong>
               <span>个记录日</span>
             </div>
-            <kbd>H</kbd>
+            <kbd>H / ·</kbd>
           </div>
           <button
             type="button"

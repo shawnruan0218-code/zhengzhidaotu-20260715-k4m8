@@ -1753,7 +1753,11 @@ export function StudyReader() {
           !event.metaKey &&
           !event.ctrlKey &&
           !event.altKey &&
-          event.key.toLowerCase() === "h";
+          (
+            event.key.toLowerCase() === "h" ||
+            event.key === "·" ||
+            (event.code === "Backquote" && !event.shiftKey)
+          );
         if (event.key === "Escape" || isHistoryToggle) {
           event.preventDefault();
           setAnnotationHistoryOpen(false);
@@ -1802,7 +1806,11 @@ export function StudyReader() {
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
-        event.key.toLowerCase() === "h" &&
+        (
+          event.key.toLowerCase() === "h" ||
+          event.key === "·" ||
+          (event.code === "Backquote" && !event.shiftKey)
+        ) &&
         !document.querySelector(".account-sheet, .knowledge-sheet")
       ) {
         event.preventDefault();
