@@ -181,6 +181,27 @@ function buildLocalRecords(
 function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: string): StudyVersion | null {
   if (typeof value.id !== "string" || typeof value.name !== "string") return null;
   if (!value.id.startsWith(VERSION_ID_PREFIX)) return null;
+  const notes =
+    value.notes && typeof value.notes === "object" && !Array.isArray(value.notes)
+      ? Object.fromEntries(
+          Object.entries(value.notes).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : {};
+  const noteCreatedAt =
+    value.noteCreatedAt &&
+    typeof value.noteCreatedAt === "object" &&
+    !Array.isArray(value.noteCreatedAt)
+      ? Object.fromEntries(
+          Object.entries(value.noteCreatedAt).filter(
+            (entry): entry is [string, string] =>
+              Boolean(notes[entry[0]]) &&
+              typeof entry[1] === "string" &&
+              !Number.isNaN(Date.parse(entry[1])),
+          ),
+        )
+      : {};
   return {
     id: value.id,
     name: value.name.trim() || "未命名版本",
@@ -189,14 +210,8 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
     highlights: Array.isArray(value.highlights)
       ? value.highlights.filter((id): id is string => typeof id === "string")
       : [],
-    notes:
-      value.notes && typeof value.notes === "object" && !Array.isArray(value.notes)
-        ? Object.fromEntries(
-            Object.entries(value.notes).filter(
-              (entry): entry is [string, string] => typeof entry[1] === "string",
-            ),
-          )
-        : {},
+    notes,
+    noteCreatedAt,
     highlightHistory: Array.isArray(value.highlightHistory)
       ? value.highlightHistory
           .filter((batch): batch is string[] => Array.isArray(batch))

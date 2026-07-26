@@ -8,6 +8,10 @@ import type { CloudSyncController } from "./lib/use-cloud-sync";
 
 type Props = {
   cloud: CloudSyncController;
+  annotationStats: {
+    today: number;
+    total: number;
+  };
 };
 
 type AccountUsage = {
@@ -56,7 +60,7 @@ function friendlyAuthError(error: unknown): string {
   return message;
 }
 
-export function AccountControls({ cloud }: Props) {
+export function AccountControls({ cloud, annotationStats }: Props) {
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -220,6 +224,23 @@ export function AccountControls({ cloud }: Props) {
                   <span>当前账号</span>
                   <strong>{cloud.user.email}</strong>
                 </div>
+                <section className="account-annotation-stats" aria-label="批注统计">
+                  <div className="account-usage-heading">
+                    <strong>批注统计</strong>
+                    <span>全部复习版本</span>
+                  </div>
+                  <div className="account-annotation-cards">
+                    <div>
+                      <span>今天已批注词条</span>
+                      <strong>{annotationStats.today.toLocaleString("zh-CN")}</strong>
+                    </div>
+                    <div>
+                      <span>累计批注</span>
+                      <strong>{annotationStats.total.toLocaleString("zh-CN")}</strong>
+                    </div>
+                  </div>
+                  <small>累计数包含原有批注；今日新增从统计功能启用后开始记录。</small>
+                </section>
                 <section className="account-usage" aria-label="AI 检索累计用量">
                   <div className="account-usage-heading">
                     <strong>AI 检索累计用量</strong>

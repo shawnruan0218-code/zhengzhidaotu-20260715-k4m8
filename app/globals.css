@@ -1790,7 +1790,9 @@ kbd {
 
 .account-sheet {
   width: min(430px, 100%);
+  max-height: min(760px, calc(100dvh - 48px));
   padding: 21px;
+  overflow-y: auto;
   color: var(--ink);
   background: rgba(252, 252, 254, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.86);
@@ -1983,6 +1985,50 @@ kbd {
   background: rgba(0, 122, 255, 0.065);
   border: 1px solid rgba(0, 122, 255, 0.12);
   border-radius: 14px;
+}
+
+.account-annotation-stats {
+  margin-top: 10px;
+  padding: 13px;
+  background: rgba(175, 82, 222, 0.065);
+  border: 1px solid rgba(175, 82, 222, 0.12);
+  border-radius: 14px;
+}
+
+.account-annotation-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.account-annotation-cards > div {
+  display: flex;
+  min-width: 0;
+  padding: 10px 11px;
+  flex-direction: column;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.94);
+  border-radius: 11px;
+}
+
+.account-annotation-cards span {
+  color: #8e8e93;
+  font-size: 9px;
+}
+
+.account-annotation-cards strong {
+  color: #8b3bb0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.account-annotation-stats small {
+  color: #8e8e93;
+  font-size: 8px;
+  line-height: 1.45;
 }
 
 .account-usage-heading {

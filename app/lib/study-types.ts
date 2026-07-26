@@ -5,6 +5,7 @@ export type StudyVersion = {
   updatedAt: string;
   highlights: string[];
   notes: Record<string, string>;
+  noteCreatedAt: Record<string, string>;
   highlightHistory: string[][];
   emphasizedEntries: string[];
 };

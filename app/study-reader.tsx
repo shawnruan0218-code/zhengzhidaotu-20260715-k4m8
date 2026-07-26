@@ -119,6 +119,15 @@ function createVersionId() {
   return `${APP_NAMESPACE}-version-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function localDayKey(value: string | number | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function normalizeStoredVersion(value: unknown): StudyVersion | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<StudyVersion>;
@@ -130,6 +139,19 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
       ? Object.fromEntries(
           Object.entries(candidate.notes).filter(
             (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : {};
+  const noteCreatedAt =
+    candidate.noteCreatedAt &&
+    typeof candidate.noteCreatedAt === "object" &&
+    !Array.isArray(candidate.noteCreatedAt)
+      ? Object.fromEntries(
+          Object.entries(candidate.noteCreatedAt).filter(
+            (entry): entry is [string, string] =>
+              Boolean(notes[entry[0]]) &&
+              typeof entry[1] === "string" &&
+              !Number.isNaN(Date.parse(entry[1])),
           ),
         )
       : {};
@@ -146,6 +168,7 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
       ? candidate.highlights.filter((id): id is string => typeof id === "string")
       : [],
     notes,
+    noteCreatedAt,
     highlightHistory: Array.isArray(candidate.highlightHistory)
       ? candidate.highlightHistory
           .filter((batch): batch is string[] => Array.isArray(batch))
@@ -755,16 +778,6 @@ export function StudyReader() {
     [updateActiveVersion],
   );
 
-  const setNotes = useCallback(
-    (update: StateUpdate<Record<string, string>>) => {
-      updateActiveVersion((version) => ({
-        ...version,
-        notes: typeof update === "function" ? update(version.notes) : update,
-      }));
-    },
-    [updateActiveVersion],
-  );
-
   const setEmphasizedEntries = useCallback(
     (update: StateUpdate<string[]>) => {
       updateActiveVersion((version) => ({
@@ -840,6 +853,7 @@ export function StudyReader() {
           updatedAt: INITIAL_UPDATED_AT,
           highlights: [],
           notes: {},
+          noteCreatedAt: {},
           highlightHistory: [],
           emphasizedEntries: [],
         },
@@ -999,6 +1013,7 @@ export function StudyReader() {
       updatedAt: timestamp,
       highlights: [],
       notes: {},
+      noteCreatedAt: {},
       highlightHistory: [],
       emphasizedEntries: [],
     };
@@ -1167,22 +1182,39 @@ export function StudyReader() {
 
   const saveAnnotation = useCallback(() => {
     if (!activeEntryId || !noteDraft.trim()) return;
-    setNotes((existing) => ({ ...existing, [activeEntryId]: noteDraft.trim() }));
+    const savedAt = new Date().toISOString();
+    updateActiveVersion((version) => {
+      const alreadyExists = Boolean(version.notes[activeEntryId]);
+      return {
+        ...version,
+        notes: { ...version.notes, [activeEntryId]: noteDraft.trim() },
+        noteCreatedAt:
+          alreadyExists || version.noteCreatedAt[activeEntryId]
+            ? version.noteCreatedAt
+            : { ...version.noteCreatedAt, [activeEntryId]: savedAt },
+      };
+    });
     closeAnnotation();
     showToast("批注已保存，条目下方已加下划线");
-  }, [activeEntryId, closeAnnotation, noteDraft, showToast]);
+  }, [activeEntryId, closeAnnotation, noteDraft, showToast, updateActiveVersion]);
 
   const deleteAnnotation = useCallback(() => {
     if (!activeEntryId) return;
-    setNotes((existing) => {
-      const next = { ...existing };
-      delete next[activeEntryId];
-      return next;
+    updateActiveVersion((version) => {
+      const nextNotes = { ...version.notes };
+      const nextNoteCreatedAt = { ...version.noteCreatedAt };
+      delete nextNotes[activeEntryId];
+      delete nextNoteCreatedAt[activeEntryId];
+      return {
+        ...version,
+        notes: nextNotes,
+        noteCreatedAt: nextNoteCreatedAt,
+      };
     });
     setFloatingNoteEntryId(null);
     closeAnnotation();
     showToast("批注已删除");
-  }, [activeEntryId, closeAnnotation, showToast]);
+  }, [activeEntryId, closeAnnotation, showToast, updateActiveVersion]);
 
   const goToPage = useCallback(
     (requestedPage: number, behavior: ScrollBehavior = "smooth") => {
@@ -2033,10 +2065,25 @@ export function StudyReader() {
     showToast("已清除本页高亮");
   };
 
+  const annotationStats = useMemo(() => {
+    const todayKey = localDayKey(new Date());
+    return versions.reduce(
+      (stats, version) => {
+        const noteIds = Object.keys(version.notes);
+        stats.total += noteIds.length;
+        stats.today += noteIds.filter(
+          (entryId) => localDayKey(version.noteCreatedAt[entryId] ?? "") === todayKey,
+        ).length;
+        return stats;
+      },
+      { today: 0, total: 0 },
+    );
+  }, [versions]);
+
   return (
     <main className="reader-shell">
       <header className="reader-toolbar" aria-label="复习工具栏">
-        <AccountControls cloud={cloud} />
+        <AccountControls cloud={cloud} annotationStats={annotationStats} />
 
         <div className="toolbar-lanes">
           <div className="toolbar-row toolbar-primary-row">
