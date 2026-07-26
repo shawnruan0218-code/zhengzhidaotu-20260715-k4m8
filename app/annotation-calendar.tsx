@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AnnotationRecord } from "./lib/study-types";
 
 type Props = {
+  active?: boolean;
   records: AnnotationRecord[];
   onJump: (record: AnnotationRecord) => void;
 };
@@ -29,7 +30,7 @@ function formatSelectedDay(dayKey: string) {
   return `${year}年${month}月${day}日`;
 }
 
-export function AnnotationCalendar({ records, onJump }: Props) {
+export function AnnotationCalendar({ active = true, records, onJump }: Props) {
   const today = useMemo(() => new Date(), []);
   const todayKey = localDayKey(today);
   const [month, setMonth] = useState(() => monthStart(today));
@@ -94,6 +95,11 @@ export function AnnotationCalendar({ records, onJump }: Props) {
   };
 
   useEffect(() => {
+    if (!active) {
+      setHoveredRecordId(null);
+      return;
+    }
+
     const handleSpacePreview = (event: KeyboardEvent) => {
       if (
         event.code !== "Space" ||
@@ -135,7 +141,7 @@ export function AnnotationCalendar({ records, onJump }: Props) {
     window.addEventListener("keydown", handleSpacePreview, true);
     return () =>
       window.removeEventListener("keydown", handleSpacePreview, true);
-  }, [hoveredRecordId, showAllNotes]);
+  }, [active, hoveredRecordId, showAllNotes]);
 
   const toggleAllNotes = () => {
     setShowAllNotes((current) => !current);

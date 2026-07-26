@@ -2416,7 +2416,12 @@ kbd {
   animation: backdrop-in 180ms ease-out both;
 }
 
+.annotation-history-backdrop[hidden] {
+  display: none;
+}
+
 .annotation-history-sheet {
+  position: relative;
   display: flex;
   width: min(1160px, 100%);
   height: min(900px, calc(100dvh - 48px));
@@ -2704,6 +2709,44 @@ kbd {
 .annotation-history-content .annotation-undated[open] .annotation-record-list {
   max-height: none;
   overflow: visible;
+}
+
+.annotation-history-return-top {
+  position: absolute;
+  z-index: 4;
+  right: 27px;
+  bottom: 25px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0 0 3px;
+  place-items: center;
+  color: #fff;
+  font-size: 23px;
+  font-weight: 650;
+  line-height: 1;
+  background: linear-gradient(145deg, #ad57cf, #8738aa);
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 50%;
+  box-shadow:
+    0 9px 24px rgba(126, 51, 159, 0.3),
+    0 2px 7px rgba(82, 38, 99, 0.16);
+  cursor: pointer;
+  animation: annotation-return-top-in 160ms ease-out both;
+}
+
+.annotation-history-return-top:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 28px rgba(126, 51, 159, 0.34),
+    0 3px 8px rgba(82, 38, 99, 0.18);
+}
+
+@keyframes annotation-return-top-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.92);
+  }
 }
 
 .account-usage-heading {
@@ -3173,6 +3216,13 @@ kbd {
   .annotation-history-content .annotation-undated[open] .annotation-record-list {
     max-height: none;
     overflow: visible;
+  }
+
+  .annotation-history-return-top {
+    right: 19px;
+    bottom: 18px;
+    width: 42px;
+    height: 42px;
   }
 }
 

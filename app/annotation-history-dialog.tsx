@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { UIEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
 import type { AnnotationRecord } from "./lib/study-types";
@@ -28,6 +28,9 @@ export function AnnotationHistoryDialog({
   onClose,
   onJump,
 }: Props) {
+  const [portalReady, setPortalReady] = useState(false);
+  const [showReturnToTop, setShowReturnToTop] = useState(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const datedDayCount = useMemo(
     () =>
       new Set(
@@ -38,12 +41,25 @@ export function AnnotationHistoryDialog({
     [records],
   );
 
-  if (!open || typeof document === "undefined") return null;
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
+  const handleContentScroll = (event: UIEvent<HTMLDivElement>) => {
+    setShowReturnToTop(event.currentTarget.scrollTop > 180);
+  };
+
+  const returnToTop = () => {
+    contentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  if (!portalReady || typeof document === "undefined") return null;
 
   return createPortal(
     <div
       className="annotation-history-backdrop"
       role="presentation"
+      hidden={!open}
       onMouseDown={onClose}
     >
       <section
@@ -80,8 +96,13 @@ export function AnnotationHistoryDialog({
           </button>
         </header>
 
-        <div className="annotation-history-content">
+        <div
+          ref={contentRef}
+          className="annotation-history-content"
+          onScroll={handleContentScroll}
+        >
           <AnnotationCalendar
+            active={open}
             records={records}
             onJump={(record) => {
               onClose();
@@ -89,6 +110,17 @@ export function AnnotationHistoryDialog({
             }}
           />
         </div>
+        {showReturnToTop && (
+          <button
+            type="button"
+            className="annotation-history-return-top"
+            aria-label="回到历史记录顶部"
+            title="回到顶部"
+            onClick={returnToTop}
+          >
+            ↑
+          </button>
+        )}
       </section>
     </div>,
     document.body,
