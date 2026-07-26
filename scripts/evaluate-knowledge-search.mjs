@@ -125,7 +125,37 @@ for (const testCase of selectedCases) {
     console.log(JSON.stringify({ model, report }, null, 2));
     continue;
   }
-  const parsed = parseJsonContent(body?.choices?.[0]?.message?.content ?? "");
+  const rawContent = body?.choices?.[0]?.message?.content;
+  if (typeof rawContent !== "string" || !rawContent.trim()) {
+    const report = {
+      name: testCase.name,
+      ok: false,
+      error: "模型返回空内容",
+      usage: body?.usage,
+      finishReason: body?.choices?.[0]?.finish_reason,
+      durationMs: Date.now() - startedAt,
+    };
+    reports.push(report);
+    console.log(JSON.stringify({ model, report }, null, 2));
+    continue;
+  }
+  let parsed;
+  try {
+    parsed = parseJsonContent(rawContent);
+  } catch {
+    const report = {
+      name: testCase.name,
+      ok: false,
+      error: "模型返回内容不是有效 JSON",
+      contentPreview: rawContent.slice(0, 500),
+      usage: body?.usage,
+      finishReason: body?.choices?.[0]?.finish_reason,
+      durationMs: Date.now() - startedAt,
+    };
+    reports.push(report);
+    console.log(JSON.stringify({ model, report }, null, 2));
+    continue;
+  }
   const selected = Array.isArray(parsed.matches)
     ? parsed.matches
         .map((match) => ({
