@@ -2250,7 +2250,15 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
+}
+
+.annotation-day-records > header > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
 }
 
 .annotation-day-records > header strong {
@@ -2260,6 +2268,26 @@ kbd {
 .annotation-day-records > header span {
   color: #8e8e93;
   font-size: 8px;
+}
+
+.annotation-day-records > header button {
+  flex: 0 0 auto;
+  min-height: 25px;
+  padding: 0 8px;
+  color: #7e339f;
+  font-size: 8px;
+  font-weight: 650;
+  background: rgba(175, 82, 222, 0.08);
+  border: 1px solid rgba(175, 82, 222, 0.12);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.annotation-day-records > header button:hover,
+.annotation-day-records > header button.is-active {
+  color: #fff;
+  background: #9a44bf;
+  border-color: #9a44bf;
 }
 
 .annotation-record-list {
@@ -2288,6 +2316,11 @@ kbd {
   background: #fff;
   border-color: rgba(175, 82, 222, 0.22);
   box-shadow: 0 4px 12px rgba(82, 38, 99, 0.08);
+}
+
+.annotation-record.is-note-visible {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(175, 82, 222, 0.19);
 }
 
 .annotation-record-title {
@@ -2321,8 +2354,20 @@ kbd {
   color: #515154;
   font-size: 9px;
   line-height: 1.45;
+  animation: annotation-note-reveal 160ms ease-out both;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+@keyframes annotation-note-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .annotation-record small {

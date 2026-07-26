@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AnnotationRecord } from "./lib/study-types";
 
 type Props = {
@@ -34,6 +34,14 @@ export function AnnotationCalendar({ records, onJump }: Props) {
   const todayKey = localDayKey(today);
   const [month, setMonth] = useState(() => monthStart(today));
   const [selectedDay, setSelectedDay] = useState(todayKey);
+  const [hoveredRecordId, setHoveredRecordId] = useState<string | null>(null);
+  const [revealedRecordIds, setRevealedRecordIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [showAllNotes, setShowAllNotes] = useState(false);
+  const [hiddenFromAllIds, setHiddenFromAllIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const recordsByDay = useMemo(() => {
     const result = new Map<string, AnnotationRecord[]>();
@@ -85,6 +93,100 @@ export function AnnotationCalendar({ records, onJump }: Props) {
     setSelectedDay(localDayKey(next));
   };
 
+  useEffect(() => {
+    const handleSpacePreview = (event: KeyboardEvent) => {
+      if (
+        event.code !== "Space" ||
+        event.repeat ||
+        !hoveredRecordId ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches("input, textarea, select") ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (showAllNotes) {
+        setHiddenFromAllIds((current) => {
+          const next = new Set(current);
+          if (next.has(hoveredRecordId)) next.delete(hoveredRecordId);
+          else next.add(hoveredRecordId);
+          return next;
+        });
+        return;
+      }
+      setRevealedRecordIds((current) => {
+        const next = new Set(current);
+        if (next.has(hoveredRecordId)) next.delete(hoveredRecordId);
+        else next.add(hoveredRecordId);
+        return next;
+      });
+    };
+
+    window.addEventListener("keydown", handleSpacePreview, true);
+    return () =>
+      window.removeEventListener("keydown", handleSpacePreview, true);
+  }, [hoveredRecordId, showAllNotes]);
+
+  const toggleAllNotes = () => {
+    setShowAllNotes((current) => !current);
+    setHiddenFromAllIds(new Set());
+  };
+
+  const renderRecord = (record: AnnotationRecord) => {
+    const noteVisible = showAllNotes
+      ? !hiddenFromAllIds.has(record.id)
+      : revealedRecordIds.has(record.id);
+    return (
+      <button
+        type="button"
+        className={[
+          "annotation-record",
+          noteVisible ? "is-note-visible" : "",
+        ].filter(Boolean).join(" ")}
+        key={record.id}
+        aria-expanded={noteVisible}
+        onMouseEnter={() => setHoveredRecordId(record.id)}
+        onMouseLeave={() =>
+          setHoveredRecordId((current) =>
+            current === record.id ? null : current,
+          )
+        }
+        onFocus={() => setHoveredRecordId(record.id)}
+        onBlur={() =>
+          setHoveredRecordId((current) =>
+            current === record.id ? null : current,
+          )
+        }
+        onClick={() => onJump(record)}
+      >
+        <span className="annotation-record-title">
+          <strong>{record.entryText}</strong>
+          <i>第 {record.page} 页 ›</i>
+        </span>
+        {noteVisible && <p>{record.note}</p>}
+        <small>
+          {record.versionName}
+          {record.createdAt &&
+            ` · ${new Date(record.createdAt).toLocaleTimeString("zh-CN", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`}
+          {!noteVisible && " · 悬停按空格查看批注"}
+        </small>
+      </button>
+    );
+  };
+
   return (
     <div className="annotation-calendar">
       <header className="annotation-calendar-header">
@@ -129,33 +231,22 @@ export function AnnotationCalendar({ records, onJump }: Props) {
 
       <section className="annotation-day-records" aria-label={`${formatSelectedDay(selectedDay)}批注记录`}>
         <header>
-          <strong>{formatSelectedDay(selectedDay)}</strong>
-          <span>{selectedRecords.length} 条</span>
+          <div>
+            <strong>{formatSelectedDay(selectedDay)}</strong>
+            <span>{selectedRecords.length} 条</span>
+          </div>
+          <button
+            type="button"
+            className={showAllNotes ? "is-active" : ""}
+            aria-pressed={showAllNotes}
+            onClick={toggleAllNotes}
+          >
+            {showAllNotes ? "隐藏全部批注" : "显示全部批注"}
+          </button>
         </header>
         {selectedRecords.length ? (
           <div className="annotation-record-list">
-            {selectedRecords.map((record) => (
-              <button
-                type="button"
-                className="annotation-record"
-                key={record.id}
-                onClick={() => onJump(record)}
-              >
-                <span className="annotation-record-title">
-                  <strong>{record.entryText}</strong>
-                  <i>第 {record.page} 页 ›</i>
-                </span>
-                <p>{record.note}</p>
-                <small>
-                  {record.versionName}
-                  {record.createdAt &&
-                    ` · ${new Date(record.createdAt).toLocaleTimeString("zh-CN", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}`}
-                </small>
-              </button>
-            ))}
+            {selectedRecords.map(renderRecord)}
           </div>
         ) : (
           <p className="annotation-calendar-no-records">这一天没有新增批注</p>
@@ -166,21 +257,7 @@ export function AnnotationCalendar({ records, onJump }: Props) {
         <details className="annotation-undated">
           <summary>历史批注（日期未记录） · {undatedRecords.length} 条</summary>
           <div className="annotation-record-list">
-            {undatedRecords.map((record) => (
-              <button
-                type="button"
-                className="annotation-record"
-                key={record.id}
-                onClick={() => onJump(record)}
-              >
-                <span className="annotation-record-title">
-                  <strong>{record.entryText}</strong>
-                  <i>第 {record.page} 页 ›</i>
-                </span>
-                <p>{record.note}</p>
-                <small>{record.versionName}</small>
-              </button>
-            ))}
+            {undatedRecords.map(renderRecord)}
           </div>
         </details>
       )}
