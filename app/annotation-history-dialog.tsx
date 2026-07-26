@@ -30,6 +30,9 @@ export function AnnotationHistoryDialog({
 }: Props) {
   const [portalReady, setPortalReady] = useState(false);
   const [showReturnToTop, setShowReturnToTop] = useState(false);
+  const [lastVisitedRecordId, setLastVisitedRecordId] = useState<string | null>(
+    null,
+  );
   const contentRef = useRef<HTMLDivElement | null>(null);
   const datedDayCount = useMemo(
     () =>
@@ -103,8 +106,10 @@ export function AnnotationHistoryDialog({
         >
           <AnnotationCalendar
             active={open}
+            lastVisitedRecordId={lastVisitedRecordId}
             records={records}
             onJump={(record) => {
+              setLastVisitedRecordId(record.id);
               onClose();
               onJump(record);
             }}

@@ -5,6 +5,7 @@ import type { AnnotationRecord } from "./lib/study-types";
 
 type Props = {
   active?: boolean;
+  lastVisitedRecordId?: string | null;
   records: AnnotationRecord[];
   onJump: (record: AnnotationRecord) => void;
 };
@@ -30,7 +31,12 @@ function formatSelectedDay(dayKey: string) {
   return `${year}年${month}月${day}日`;
 }
 
-export function AnnotationCalendar({ active = true, records, onJump }: Props) {
+export function AnnotationCalendar({
+  active = true,
+  lastVisitedRecordId = null,
+  records,
+  onJump,
+}: Props) {
   const today = useMemo(() => new Date(), []);
   const todayKey = localDayKey(today);
   const [month, setMonth] = useState(() => monthStart(today));
@@ -158,6 +164,7 @@ export function AnnotationCalendar({ active = true, records, onJump }: Props) {
         className={[
           "annotation-record",
           noteVisible ? "is-note-visible" : "",
+          record.id === lastVisitedRecordId ? "is-last-visited" : "",
         ].filter(Boolean).join(" ")}
         key={record.id}
         aria-expanded={noteVisible}
@@ -175,6 +182,9 @@ export function AnnotationCalendar({ active = true, records, onJump }: Props) {
         }
         onClick={() => onJump(record)}
       >
+        {record.id === lastVisitedRecordId && (
+          <span className="annotation-record-last-visited">上次看到这里</span>
+        )}
         <span className="annotation-record-title">
           <strong>{record.entryText}</strong>
           <i>第 {record.page} 页 ›</i>
