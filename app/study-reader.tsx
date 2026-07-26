@@ -1659,7 +1659,7 @@ export function StudyReader() {
         event.metaKey ||
         event.ctrlKey ||
         event.altKey ||
-        event.key.toLowerCase() !== "t"
+        event.key.toLowerCase() !== "r"
       ) {
         return;
       }
@@ -1673,7 +1673,7 @@ export function StudyReader() {
     };
 
     const handlePanKeyUp = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "t") releasePanKey();
+      if (event.key.toLowerCase() === "r") releasePanKey();
     };
 
     window.addEventListener("keydown", handlePanKeyDown);
@@ -2464,7 +2464,7 @@ export function StudyReader() {
             type="button"
             className={`zoom-toggle ${zoomMode ? "active" : ""}`}
             aria-pressed={zoomMode}
-            title={zoomMode ? "按住 T 并拖动鼠标可平移页面；快捷键 P 关闭缩放" : "快捷键 P 开启缩放"}
+            title={zoomMode ? "按住 R 并拖动鼠标可平移页面；快捷键 P 关闭缩放" : "快捷键 P 开启缩放"}
             onKeyDown={(event) => {
               if (event.code === "Space") event.preventDefault();
             }}
