@@ -52,6 +52,13 @@ function normalizeFunctionAnswer(
       return {
         ...candidate,
         reason: typeof record.reason === "string" ? record.reason : undefined,
+        queryLabels: Array.isArray(record.queryLabels)
+          ? record.queryLabels.filter(
+              (label): label is string => typeof label === "string",
+            )
+          : typeof record.queryLabel === "string"
+            ? [record.queryLabel]
+            : candidate.queryLabels,
         confidence:
           typeof record.confidence === "number"
             ? Math.max(0, Math.min(1, record.confidence))
@@ -92,6 +99,7 @@ function candidatePayload(entry: KnowledgeMatch) {
     title: entry.title,
     text: entry.text,
     breadcrumb: entry.breadcrumb,
+    queryLabels: entry.queryLabels,
   };
 }
 
@@ -271,7 +279,7 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
                 <button
                   type="button"
                   className="knowledge-result"
-                  key={match.id}
+                  key={`${match.id}-${index}`}
                   onClick={() => {
                     onLocate(match);
                     onClose();
@@ -279,7 +287,12 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
                 >
                   <span className="knowledge-result-rank">{index + 1}</span>
                   <span className="knowledge-result-copy">
-                    <strong>{match.title}</strong>
+                    <strong>
+                      {match.queryLabels?.length
+                        ? `${match.queryLabels.join("、")} · `
+                        : ""}
+                      {match.title}
+                    </strong>
                     <small>
                       {match.breadcrumb.join(" › ") || "图谱正文"}
                       {" · "}

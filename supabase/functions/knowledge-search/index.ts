@@ -27,7 +27,10 @@ function isCandidate(value: unknown): value is ModelCandidate {
     typeof candidate.title === "string" &&
     typeof candidate.text === "string" &&
     Array.isArray(candidate.breadcrumb) &&
-    candidate.breadcrumb.every((part) => typeof part === "string")
+    candidate.breadcrumb.every((part) => typeof part === "string") &&
+    (candidate.queryLabels === undefined ||
+      (Array.isArray(candidate.queryLabels) &&
+        candidate.queryLabels.every((label) => typeof label === "string")))
   );
 }
 

@@ -56,6 +56,16 @@ const cases = [
     ],
     expectedMatchCount: 4,
   },
+  {
+    name: "南方谈话四选项全覆盖",
+    query: `1992年，邓小平同志在南方谈话中明确指出，“计划经济不等于社会主义，资本主义也有计划；市场经济不等于资本主义，社会主义也有市场，计划和市场都是经济手段”。这一精辟论述（）
+A.为形成社会主义市场经济理论开辟了道路 党的十一届六中全会提出了“计划经济为主、市场调节为辅”的方针
+B.是社会主义经济理论的重大突破 党的十二届三中全会提出“公有制基础上的有计划的商品经济”的概念
+C.明确把建立社会主义市场经济体制作为我国经济体制改革的目标 党的十四大
+D.标志着邓小平同志的社会主义市场经济理论的形成`,
+    expectedLabels: ["A", "B", "C", "D"],
+    expectedMatchCount: 4,
+  },
 ];
 const selectedCases = process.env.EVAL_CASE
   ? cases.filter((testCase) => testCase.name.includes(process.env.EVAL_CASE))
@@ -77,6 +87,7 @@ for (const testCase of selectedCases) {
     title: candidate.title,
     text: candidate.text,
     breadcrumb: candidate.breadcrumb,
+    queryLabels: candidate.queryLabels,
   }));
   const startedAt = Date.now();
   const response = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
@@ -143,14 +154,29 @@ for (const testCase of selectedCases) {
     (testCase.expectedMatchCount === undefined ||
       selected.length === testCase.expectedMatchCount) &&
     (testCase.maxMatchCount === undefined || selected.length <= testCase.maxMatchCount);
+  const labelsOk =
+    testCase.expectedLabels === undefined ||
+    testCase.expectedLabels.every((label) =>
+      selected.some(
+        (match) =>
+          Array.isArray(match.queryLabels) &&
+          match.queryLabels.includes(label),
+      ),
+    );
   const report = {
     name: testCase.name,
-    ok: (testCase.expectedItems ? multipleMatchesOk : singleMatchOk) && matchCountOk,
+    ok:
+      (testCase.expectedLabels
+        ? labelsOk
+        : testCase.expectedItems
+          ? multipleMatchesOk
+          : singleMatchOk) && matchCountOk,
     answer: parsed.answer,
     selected: selected.map((match) => ({
       id: match.id,
       page: match.candidate.page,
       title: match.candidate.title,
+      queryLabels: match.queryLabels,
       reason: match.reason,
       confidence: match.confidence,
     })),

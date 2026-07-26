@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  extractKnowledgeQueryUnits,
   localKnowledgeAnswer,
   rankKnowledgeCandidates,
   rankKnowledgeEntries,
@@ -81,6 +82,56 @@ test("multi-line queries preserve candidates for each independent item", () => {
     10,
   );
   assert.deepEqual(new Set(matches.map((match) => match.id)), new Set(["p12", "p13", "p14", "p15"]));
+});
+
+test("A/B/C/D questions are split into independent retrieval units", () => {
+  const units = extractKnowledgeQueryUnits(
+    "题干（ ） A.第一个知识点 B.第二个知识点\nC.第三个知识点 D.第四个知识点",
+  );
+  assert.deepEqual(
+    units.map((unit) => unit.label),
+    ["A", "B", "C", "D"],
+  );
+  assert.deepEqual(
+    units.map((unit) => unit.text),
+    ["第一个知识点", "第二个知识点", "第三个知识点", "第四个知识点"],
+  );
+});
+
+test("market economy option question preserves candidates for all four options", () => {
+  const query = `1992年，邓小平同志在南方谈话中指出，计划和市场都是经济手段。这一精辟论述（）
+A.为形成社会主义市场经济理论开辟了道路 党的十一届六中全会提出“计划经济为主、市场调节为辅”
+B.是社会主义经济理论的重大突破 党的十二届三中全会提出“公有制基础上的有计划的商品经济”
+C.明确把建立社会主义市场经济体制作为我国经济体制改革的目标 党的十四大
+D.标志着邓小平同志的社会主义市场经济理论的形成`;
+  const matches = rankKnowledgeCandidates(
+    query,
+    builtKnowledgeIndex.entries,
+    48,
+  );
+  const labels = new Set(matches.flatMap((match) => match.queryLabels ?? []));
+  assert.deepEqual(labels, new Set(["A", "B", "C", "D"]));
+  assert.ok(
+    matches.some(
+      (match) =>
+        match.queryLabels?.includes("B") &&
+        `${match.title}\n${match.text}`.includes("十二届三中全会"),
+    ),
+  );
+  assert.ok(
+    matches.some(
+      (match) =>
+        match.queryLabels?.includes("C") &&
+        `${match.title}\n${match.text}`.includes("建立社会主义市场经济体制"),
+    ),
+  );
+  assert.ok(
+    matches.some(
+      (match) =>
+        match.queryLabels?.includes("D") &&
+        `${match.title}\n${match.text}`.includes("社会主义市场经济理论的形成"),
+    ),
+  );
 });
 
 test("area matches preserve a smaller exact-entry locator", () => {
