@@ -232,10 +232,13 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="粘贴题目、选项，或输入一个知识点…"
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && canSearch) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
+              if (
+                event.key !== "Enter"
+                || event.shiftKey
+                || event.nativeEvent.isComposing
+              ) return;
+              event.preventDefault();
+              if (canSearch) event.currentTarget.form?.requestSubmit();
             }}
           />
           <button type="submit" disabled={!canSearch}>
