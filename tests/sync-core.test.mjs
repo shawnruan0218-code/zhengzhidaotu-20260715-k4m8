@@ -4,6 +4,7 @@ import {
   chunkItems,
   mergeRecordSets,
   readAllPages,
+  reconcileVersionSnapshots,
 } from "../app/lib/sync-core.ts";
 
 const namespace = "zhengzhidaotu_20260715_k4m8";
@@ -57,6 +58,84 @@ test("a deletion wins an exact timestamp tie deterministically", () => {
   const live = record("version:a", timestamp, { value: "live" });
   const deleted = record("version:a", timestamp, {}, timestamp);
   assert.equal(mergeRecordSets([live], [deleted])[0].deleted_at, timestamp);
+});
+
+test("a note saved while sync is in flight cannot be overwritten by the stale snapshot", () => {
+  const staleSyncedVersion = {
+    id: "version-a",
+    createdAt: 1,
+    updatedAt: "2026-07-27T01:00:00.000Z",
+    notes: {},
+  };
+  const justSavedVersion = {
+    ...staleSyncedVersion,
+    updatedAt: "2026-07-27T01:00:00.001Z",
+    notes: { entry1: "第一次保存的批注" },
+  };
+
+  const reconciled = reconcileVersionSnapshots(
+    [justSavedVersion],
+    [staleSyncedVersion],
+  );
+
+  assert.deepEqual(reconciled[0].notes, { entry1: "第一次保存的批注" });
+  assert.equal(reconciled[0].updatedAt, justSavedVersion.updatedAt);
+});
+
+test("a genuinely newer synchronized version still replaces the older local version", () => {
+  const localVersion = {
+    id: "version-a",
+    createdAt: 1,
+    updatedAt: "2026-07-27T01:00:00.000Z",
+    notes: {},
+  };
+  const newerSyncedVersion = {
+    ...localVersion,
+    updatedAt: "2026-07-27T01:00:00.001Z",
+    notes: { entry1: "来自另一台设备" },
+  };
+
+  assert.deepEqual(
+    reconcileVersionSnapshots([localVersion], [newerSyncedVersion]),
+    [newerSyncedVersion],
+  );
+});
+
+test("a local version created after the sync snapshot is preserved", () => {
+  const newLocalVersion = {
+    id: "version-new",
+    createdAt: 2,
+    updatedAt: "2026-07-27T01:00:00.002Z",
+    notes: {},
+  };
+  assert.deepEqual(reconcileVersionSnapshots([newLocalVersion], []), [newLocalVersion]);
+});
+
+test("a deletion only removes a local version when the deletion is not older", () => {
+  const localVersion = {
+    id: "version-a",
+    createdAt: 1,
+    updatedAt: "2026-07-27T01:00:00.002Z",
+    notes: {},
+  };
+  assert.deepEqual(
+    reconcileVersionSnapshots([localVersion], [], {
+      "version-a": "2026-07-27T01:00:00.001Z",
+    }),
+    [localVersion],
+  );
+  assert.deepEqual(
+    reconcileVersionSnapshots([localVersion], [], {
+      "version-a": "2026-07-27T01:00:00.002Z",
+    }),
+    [],
+  );
+  assert.deepEqual(
+    reconcileVersionSnapshots([], [localVersion], {
+      "version-a": "2026-07-27T01:00:00.002Z",
+    }),
+    [],
+  );
 });
 
 test("paginated reads retrieve more than the Supabase 1000-row default", async () => {

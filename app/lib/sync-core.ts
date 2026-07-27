@@ -9,6 +9,64 @@ export type SyncRecord = {
   deleted_at: string | null;
 };
 
+type TimestampedVersion = {
+  id: string;
+  createdAt: number;
+  updatedAt: string;
+};
+
+function timestampValue(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function deterministicVersionPayload<T extends TimestampedVersion>(version: T): string {
+  return JSON.stringify(version);
+}
+
+export function reconcileVersionSnapshots<T extends TimestampedVersion>(
+  currentVersions: T[],
+  syncedVersions: T[],
+  deletedVersionUpdates: Record<string, string> = {},
+): T[] {
+  const reconciled = new Map<string, T>();
+  for (const syncedVersion of syncedVersions) {
+    const deletedAt = deletedVersionUpdates[syncedVersion.id];
+    if (
+      !deletedAt ||
+      timestampValue(syncedVersion.updatedAt) > timestampValue(deletedAt)
+    ) {
+      reconciled.set(syncedVersion.id, syncedVersion);
+    }
+  }
+
+  for (const currentVersion of currentVersions) {
+    const syncedVersion = reconciled.get(currentVersion.id);
+    if (syncedVersion) {
+      const currentTime = timestampValue(currentVersion.updatedAt);
+      const syncedTime = timestampValue(syncedVersion.updatedAt);
+      if (
+        currentTime > syncedTime ||
+        (currentTime === syncedTime &&
+          deterministicVersionPayload(currentVersion) >
+            deterministicVersionPayload(syncedVersion))
+      ) {
+        reconciled.set(currentVersion.id, currentVersion);
+      }
+      continue;
+    }
+
+    const deletedAt = deletedVersionUpdates[currentVersion.id];
+    if (!deletedAt || timestampValue(currentVersion.updatedAt) > timestampValue(deletedAt)) {
+      reconciled.set(currentVersion.id, currentVersion);
+    }
+  }
+
+  return [...reconciled.values()].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+  );
+}
+
 export function chunkItems<T>(items: T[], size: number): T[][] {
   if (!Number.isInteger(size) || size <= 0) throw new Error("Chunk size must be positive");
   const chunks: T[][] = [];

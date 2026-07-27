@@ -29,6 +29,7 @@ import {
   chooseLatestRecord,
   mergeRecordSets,
   readAllPages,
+  reconcileVersionSnapshots,
   type SyncRecord,
 } from "./sync-core";
 
@@ -309,6 +310,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
   const applyMergedRecords = useCallback((records: SyncRecord[]) => {
     const nextVersions: StudyVersion[] = [];
     const nextTombstones: Record<string, Tombstone> = {};
+    const versionItemPrefix = scopedItemKey("version:");
     let activeRecord: SyncRecord | null = null;
 
     for (const record of records) {
@@ -339,10 +341,40 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
       : nextVersions[0].id;
     const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
 
-    tombstonesRef.current = nextTombstones;
-    latestInputs.current.setVersions((current) =>
-      JSON.stringify(current) === JSON.stringify(nextVersions) ? current : nextVersions,
+    const reconciledTombstones = { ...nextTombstones };
+    for (const [itemKey, localTombstone] of Object.entries(tombstonesRef.current)) {
+      const syncedTombstone = reconciledTombstones[itemKey];
+      if (
+        !syncedTombstone ||
+        Date.parse(localTombstone.updatedAt) > Date.parse(syncedTombstone.updatedAt)
+      ) {
+        reconciledTombstones[itemKey] = localTombstone;
+      }
+    }
+    const deletedVersionUpdates = Object.fromEntries(
+      Object.entries(reconciledTombstones)
+        .filter(
+          ([itemKey, tombstone]) =>
+            tombstone.itemType === "study_version" &&
+            itemKey.startsWith(versionItemPrefix),
+        )
+        .map(([itemKey, tombstone]) => [
+          itemKey.slice(versionItemPrefix.length),
+          tombstone.updatedAt,
+        ]),
     );
+
+    tombstonesRef.current = reconciledTombstones;
+    latestInputs.current.setVersions((current) => {
+      const reconciledVersions = reconcileVersionSnapshots(
+        current,
+        nextVersions,
+        deletedVersionUpdates,
+      );
+      return JSON.stringify(current) === JSON.stringify(reconciledVersions)
+        ? current
+        : reconciledVersions;
+    });
     latestInputs.current.setActiveVersionId((current) =>
       current === nextActiveId ? current : nextActiveId,
     );
