@@ -16,6 +16,12 @@ import {
   type KnowledgeMatch,
   rankKnowledgeCandidates,
 } from "./lib/knowledge-search";
+import {
+  friendlyKnowledgeError,
+  knowledgeHttpErrorMessage,
+  shouldRetryKnowledgeRequest,
+  waitForKnowledgeRetry,
+} from "./lib/knowledge-request";
 import { withBasePath } from "./lib/app-config";
 import { getSupabaseClient } from "./lib/supabase-client";
 
@@ -224,28 +230,36 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
         throw new Error("AI 检索服务尚未配置");
       }
 
-      const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/knowledge-search`,
-        {
+      const endpoint = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/knowledge-search`;
+      const requestBody = JSON.stringify({
+        query: requestedQuery,
+        candidates: candidates.map(candidatePayload),
+      });
+      let data: FunctionResponse & { error?: unknown } = {};
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${session.access_token}`,
             apikey: publishableKey,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            query: requestedQuery,
-            candidates: candidates.map(candidatePayload),
-          }),
+          body: requestBody,
           signal: controller.signal,
-        },
-      );
-      const data = (await response.json().catch(() => ({}))) as FunctionResponse & {
-        error?: unknown;
-      };
-      if (!response.ok) {
+        });
+        data = (await response.json().catch(() => ({}))) as FunctionResponse & {
+          error?: unknown;
+        };
+        if (response.ok) break;
+        if (attempt === 0 && shouldRetryKnowledgeRequest(response.status)) {
+          await waitForKnowledgeRetry(650, controller.signal);
+          continue;
+        }
         throw new Error(
-          typeof data.error === "string" ? data.error : "AI 检索暂时不可用",
+          knowledgeHttpErrorMessage(
+            response.status,
+            typeof data.error === "string" ? data.error : undefined,
+          ),
         );
       }
       if (requestId.current !== currentRequest) return;
@@ -255,7 +269,7 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
     } catch (reason) {
       if (requestId.current !== currentRequest) return;
       if (reason instanceof DOMException && reason.name === "AbortError") return;
-      setError(reason instanceof Error ? reason.message : "检索失败，请稍后重试");
+      setError(friendlyKnowledgeError(reason));
     } finally {
       if (requestId.current === currentRequest) {
         abortController.current = null;

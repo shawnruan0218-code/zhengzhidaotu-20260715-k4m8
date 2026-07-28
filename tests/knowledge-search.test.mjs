@@ -7,6 +7,11 @@ import {
   rankKnowledgeCandidates,
   rankKnowledgeEntries,
 } from "../app/lib/knowledge-search.ts";
+import {
+  friendlyKnowledgeError,
+  knowledgeHttpErrorMessage,
+  shouldRetryKnowledgeRequest,
+} from "../app/lib/knowledge-request.ts";
 
 const builtKnowledgeIndex = JSON.parse(
   readFileSync(new URL("../public/data/knowledge-index.json", import.meta.url), "utf8"),
@@ -148,4 +153,19 @@ test("area matches preserve a smaller exact-entry locator", () => {
   assert.ok(area.focusY >= area.y - 0.0000001);
   assert.ok(area.focusX + area.focusWidth <= area.x + area.width + 0.0000001);
   assert.ok(area.focusY + area.focusHeight <= area.y + area.height + 0.0000001);
+});
+
+test("transient AI service failures are retried and shown in Chinese", () => {
+  assert.equal(shouldRetryKnowledgeRequest(502), true);
+  assert.equal(shouldRetryKnowledgeRequest(401), false);
+  assert.equal(
+    friendlyKnowledgeError(
+      new Error("Edge Function returned a non-2xx status code"),
+    ),
+    "AI 服务暂时繁忙，请重新检索",
+  );
+  assert.equal(
+    knowledgeHttpErrorMessage(504),
+    "AI 检索等待时间过长，请重新检索",
+  );
 });

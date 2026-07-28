@@ -124,7 +124,8 @@ Deno.serve(async (request) => {
     if (request.signal.aborted) {
       return jsonResponse({ error: "检索已取消" }, 499);
     }
-    throw error;
+    console.error("SiliconFlow request failed", error);
+    return jsonResponse({ error: "AI 服务连接不稳定，请重新检索" }, 502);
   }
 
   if (!siliconResponse.ok) {
