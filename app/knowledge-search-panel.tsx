@@ -1,6 +1,13 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   type KnowledgeAnswer,
@@ -112,6 +119,22 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
   const [entryCount, setEntryCount] = useState<number | null>(null);
   const requestId = useRef(0);
   const searchStartedAt = useRef<number | null>(null);
+  const abortController = useRef<AbortController | null>(null);
+
+  const cancelSearch = useCallback(() => {
+    requestId.current += 1;
+    abortController.current?.abort();
+    abortController.current = null;
+    searchStartedAt.current = null;
+    setElapsedMs(0);
+    setBusy(false);
+    setError("");
+  }, []);
+
+  const closePanel = useCallback(() => {
+    cancelSearch();
+    onClose();
+  }, [cancelSearch, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -125,11 +148,18 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closePanel();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, open]);
+  }, [closePanel, open]);
+
+  useEffect(
+    () => () => {
+      abortController.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!busy || searchStartedAt.current === null) {
@@ -165,6 +195,9 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
     if (requestedQuery.length < 2) return;
     const currentRequest = requestId.current + 1;
     requestId.current = currentRequest;
+    abortController.current?.abort();
+    const controller = new AbortController();
+    abortController.current = controller;
     searchStartedAt.current = Date.now();
     setElapsedMs(0);
     setBusy(true);
@@ -185,29 +218,57 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
         throw new Error("请先登录账号后使用 AI 检索");
       }
 
-      const { data, error: invokeError } = await client.functions.invoke("knowledge-search", {
-        body: {
-          query: requestedQuery,
-          candidates: candidates.map(candidatePayload),
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+      if (!supabaseUrl || !publishableKey) {
+        throw new Error("AI 检索服务尚未配置");
+      }
+
+      const response = await fetch(
+        `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/knowledge-search`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: publishableKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: requestedQuery,
+            candidates: candidates.map(candidatePayload),
+          }),
+          signal: controller.signal,
         },
-      });
-      if (invokeError) throw invokeError;
+      );
+      const data = (await response.json().catch(() => ({}))) as FunctionResponse & {
+        error?: unknown;
+      };
+      if (!response.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "AI 检索暂时不可用",
+        );
+      }
       if (requestId.current !== currentRequest) return;
-      const modelAnswer = normalizeFunctionAnswer((data ?? {}) as FunctionResponse, candidates);
+      const modelAnswer = normalizeFunctionAnswer(data, candidates);
       if (!modelAnswer) throw new Error("模型返回内容无法匹配图谱词条");
       setAnswer(modelAnswer);
     } catch (reason) {
       if (requestId.current !== currentRequest) return;
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
       setError(reason instanceof Error ? reason.message : "检索失败，请稍后重试");
     } finally {
-      if (requestId.current === currentRequest) setBusy(false);
+      if (requestId.current === currentRequest) {
+        abortController.current = null;
+        searchStartedAt.current = null;
+        setBusy(false);
+      }
     }
   };
 
   if (!open || typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="knowledge-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="knowledge-backdrop" role="presentation" onMouseDown={closePanel}>
       <section
         className="knowledge-sheet"
         role="dialog"
@@ -221,7 +282,7 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
             <h2 id="knowledge-search-title">AI 找知识点</h2>
             <p>{entryCount ? `已索引 ${entryCount.toLocaleString("zh-CN")} 个文字条目` : "正在读取全书文字…"}</p>
           </div>
-          <button type="button" className="sheet-close" aria-label="关闭" onClick={onClose}>×</button>
+          <button type="button" className="sheet-close" aria-label="关闭" onClick={closePanel}>×</button>
         </header>
 
         <form className="knowledge-search-form" onSubmit={search}>
@@ -241,8 +302,13 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
               if (canSearch) event.currentTarget.form?.requestSubmit();
             }}
           />
-          <button type="submit" disabled={!canSearch}>
-            {busy ? "正在检索…" : "查找对应知识点"}
+          <button
+            type={busy ? "button" : "submit"}
+            className={busy ? "is-cancel" : ""}
+            disabled={busy ? false : !canSearch}
+            onClick={busy ? cancelSearch : undefined}
+          >
+            {busy ? "取消检索" : "查找对应知识点"}
           </button>
         </form>
 

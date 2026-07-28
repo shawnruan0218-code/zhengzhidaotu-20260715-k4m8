@@ -91,32 +91,41 @@ Deno.serve(async (request) => {
 
   const candidateText = formatKnowledgeCandidates(candidates);
 
-  const siliconResponse = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${siliconFlowKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      max_tokens: 1200,
-      enable_thinking: false,
-      temperature: 0.1,
-      top_p: 0.65,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: KNOWLEDGE_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: `用户查询：\n${query}\n\n图谱候选词条：\n${candidateText}`,
-        },
-      ],
-    }),
-  });
+  let siliconResponse: Response;
+  try {
+    siliconResponse = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${siliconFlowKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: request.signal,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        max_tokens: 1200,
+        enable_thinking: false,
+        temperature: 0.1,
+        top_p: 0.65,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: KNOWLEDGE_SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: `用户查询：\n${query}\n\n图谱候选词条：\n${candidateText}`,
+          },
+        ],
+      }),
+    });
+  } catch (error) {
+    if (request.signal.aborted) {
+      return jsonResponse({ error: "检索已取消" }, 499);
+    }
+    throw error;
+  }
 
   if (!siliconResponse.ok) {
     const details = await siliconResponse.text();

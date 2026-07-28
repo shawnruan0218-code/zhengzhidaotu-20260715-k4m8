@@ -5,6 +5,7 @@ import type { AnnotationRecord } from "./lib/study-types";
 
 type Props = {
   active?: boolean;
+  dayOnly?: boolean;
   lastVisitedRecordId?: string | null;
   records: AnnotationRecord[];
   onJump: (record: AnnotationRecord) => void;
@@ -33,6 +34,7 @@ function formatSelectedDay(dayKey: string) {
 
 export function AnnotationCalendar({
   active = true,
+  dayOnly = false,
   lastVisitedRecordId = null,
   records,
   onJump,
@@ -203,6 +205,40 @@ export function AnnotationCalendar({
     );
   };
 
+  const selectedDayRecords = (
+    <section className="annotation-day-records" aria-label={`${formatSelectedDay(selectedDay)}批注记录`}>
+      <header>
+        <div>
+          <strong>{formatSelectedDay(selectedDay)}</strong>
+          <span>{selectedRecords.length} 条</span>
+        </div>
+        <button
+          type="button"
+          className={showAllNotes ? "is-active" : ""}
+          aria-pressed={showAllNotes}
+          onClick={toggleAllNotes}
+        >
+          {showAllNotes ? "隐藏全部批注" : "显示全部批注"}
+        </button>
+      </header>
+      {selectedRecords.length ? (
+        <div className="annotation-record-list">
+          {selectedRecords.map(renderRecord)}
+        </div>
+      ) : (
+        <p className="annotation-calendar-no-records">这一天没有新增批注</p>
+      )}
+    </section>
+  );
+
+  if (dayOnly) {
+    return (
+      <div className="annotation-calendar annotation-calendar-day-only">
+        {selectedDayRecords}
+      </div>
+    );
+  }
+
   return (
     <div className="annotation-calendar">
       <header className="annotation-calendar-header">
@@ -245,29 +281,7 @@ export function AnnotationCalendar({
         )}
       </div>
 
-      <section className="annotation-day-records" aria-label={`${formatSelectedDay(selectedDay)}批注记录`}>
-        <header>
-          <div>
-            <strong>{formatSelectedDay(selectedDay)}</strong>
-            <span>{selectedRecords.length} 条</span>
-          </div>
-          <button
-            type="button"
-            className={showAllNotes ? "is-active" : ""}
-            aria-pressed={showAllNotes}
-            onClick={toggleAllNotes}
-          >
-            {showAllNotes ? "隐藏全部批注" : "显示全部批注"}
-          </button>
-        </header>
-        {selectedRecords.length ? (
-          <div className="annotation-record-list">
-            {selectedRecords.map(renderRecord)}
-          </div>
-        ) : (
-          <p className="annotation-calendar-no-records">这一天没有新增批注</p>
-        )}
-      </section>
+      {selectedDayRecords}
 
       {undatedRecords.length > 0 && (
         <details className="annotation-undated">
