@@ -147,7 +147,8 @@ export type KnowledgeQueryUnit = {
 export function extractKnowledgeQueryUnits(
   rawQuery: string,
 ): KnowledgeQueryUnit[] {
-  const optionPattern = /(^|[\r\n]|\s)([A-Ja-j])\s*[.．、:：)]\s*/g;
+  const optionPattern =
+    /(^|[\r\n]|\s)([A-Ja-j])\s*(?:[.．、:：)）]\s*|(?=[对错](?:\s*[:：]|\s*(?:\r?\n|$))))/g;
   const markers: Array<{
     label: string;
     markerStart: number;

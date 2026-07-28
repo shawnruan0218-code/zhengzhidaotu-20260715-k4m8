@@ -207,3 +207,21 @@ test("same river explanation recalls absolute motion and relative rest", () => {
   assert.equal(ids.has("area-knowledge-p3-l43"), true);
   assert.equal(ids.has("area-knowledge-p3-l27"), true);
 });
+
+test("options written as B 对 and A 错 remain four independent targets", () => {
+  const query = `北斗能给飞机、地铁、证券交易、共享单车提供精准授时和定位，说明各种物质运动都离不开时间和空间。
+B 对：物质、运动、时间、空间不是分开的，现实中的物质运动总是在一定时间、一定空间中进行。
+C 对：时间和空间就是运动着的物质的基本存在形式。
+A 错：具体物质形态的时间和空间是有限的，整个物质世界才是无限的。
+D 错：离开时间和空间的物质运动根本不存在，不是暂时的、有条件的。`;
+  const units = extractKnowledgeQueryUnits(query);
+  assert.deepEqual(
+    units.map((unit) => unit.label),
+    ["B", "C", "A", "D"],
+  );
+  const matches = rankKnowledgeCandidates(query, builtKnowledgeIndex.entries, 48);
+  assert.deepEqual(
+    new Set(matches.flatMap((match) => match.queryLabels ?? [])),
+    new Set(["A", "B", "C", "D"]),
+  );
+});
