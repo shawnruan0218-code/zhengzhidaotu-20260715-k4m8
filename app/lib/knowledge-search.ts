@@ -177,8 +177,23 @@ export function extractKnowledgeQueryUnits(
       .slice(0, 10);
   }
 
-  const segments = rawQuery
-    .split(/\r?\n|[；;]/)
+  const rawSegments = rawQuery
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const structuredLinePattern =
+    /^(?:[-•·]\s*|[（(]?\d{1,3}[）).．、:：]\s*|[一二三四五六七八九十]+[、.．）)]\s*|(?:19|20)\d{2}\s+)/u;
+  const sentenceLines = rawSegments.filter((line) => /[。！？!?]$/.test(line));
+  const structuredLines = rawSegments.filter(
+    (line) => structuredLinePattern.test(line) || /[\t|｜]/.test(line),
+  );
+  const paragraphLike =
+    rawSegments.length >= 2 &&
+    sentenceLines.length >= 2 &&
+    structuredLines.length < 2;
+  if (paragraphLike) return [];
+
+  const segments = rawSegments
     .map((line) =>
       line
         .replace(/^[\s|｜:：\-—]+|[\s|｜:：\-—]+$/g, "")

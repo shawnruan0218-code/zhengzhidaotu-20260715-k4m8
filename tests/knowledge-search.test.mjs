@@ -12,6 +12,10 @@ import {
   knowledgeHttpErrorMessage,
   shouldRetryKnowledgeRequest,
 } from "../app/lib/knowledge-request.ts";
+import {
+  parseKnowledgeModelOutput,
+  recoverKnowledgeModelOutput,
+} from "../supabase/functions/knowledge-search/model-output.ts";
 
 const builtKnowledgeIndex = JSON.parse(
   readFileSync(new URL("../public/data/knowledge-index.json", import.meta.url), "utf8"),
@@ -168,4 +172,38 @@ test("transient AI service failures are retried and shown in Chinese", () => {
     knowledgeHttpErrorMessage(504),
     "AI 检索等待时间过长，请重新检索",
   );
+});
+
+test("model output parser tolerates fences, trailing commas, and extra text", () => {
+  const parsed = parseKnowledgeModelOutput(`
+说明文字
+\`\`\`json
+{"answer":"已定位","matches":[{"id":"p1","confidence":0.9,}],}
+\`\`\`
+`);
+  assert.equal(parsed.answer, "已定位");
+  assert.deepEqual(parsed.matches, [{ id: "p1", confidence: 0.9 }]);
+});
+
+test("damaged model output recovers valid candidate ids", () => {
+  const recovered = recoverKnowledgeModelOutput(
+    '{"matches":[{"id":"p2"},{"id":"p1","reason":"未结束',
+    ["p1", "p2", "p3"],
+  );
+  assert.deepEqual(
+    recovered?.matches.map((match) => match.id),
+    ["p2", "p1"],
+  );
+});
+
+test("same river explanation recalls absolute motion and relative rest", () => {
+  const query = `河水一直在流，第二次踏进去时，水已经不是刚才的水了。
+所以它强调：世界是运动变化的。
+但它还叫“同一条河流”，说明这条河还有相对稳定的一面。
+河水变了，但河道、名字、整体结构还在，所以它仍然可以被叫作“同一条河”。
+所以前者是辩证法：既承认运动变化，又承认相对稳定。`;
+  const matches = rankKnowledgeCandidates(query, builtKnowledgeIndex.entries, 48);
+  const ids = new Set(matches.map((match) => match.id));
+  assert.equal(ids.has("area-knowledge-p3-l43"), true);
+  assert.equal(ids.has("area-knowledge-p3-l27"), true);
 });
