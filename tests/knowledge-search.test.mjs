@@ -16,6 +16,7 @@ import {
   parseKnowledgeModelOutput,
   recoverKnowledgeModelOutput,
 } from "../supabase/functions/knowledge-search/model-output.ts";
+import { parseReviewClipboard } from "../app/lib/batch-knowledge-search.ts";
 
 const builtKnowledgeIndex = JSON.parse(
   readFileSync(new URL("../public/data/knowledge-index.json", import.meta.url), "utf8"),
@@ -223,5 +224,32 @@ D 错：离开时间和空间的物质运动根本不存在，不是暂时的、
   assert.deepEqual(
     new Set(matches.flatMap((match) => match.queryLabels ?? [])),
     new Set(["A", "B", "C", "D"]),
+  );
+});
+
+test("review clipboard parser splits separators and removes images and metadata", () => {
+  const items = parseReviewClipboard(`# 复习剪贴
+> 创建于 2026年7月16日 · 共 2 条
+
+---
+
+## 1
+
+第一条知识
+<span style="color:#888">收集于 7月16日</span>
+
+---
+
+## 2
+
+第二条知识
+![截图](file:///tmp/review.png)
+<span style="color:#888">收集于 7月16日</span>`);
+  assert.deepEqual(
+    items.map((item) => ({ label: item.label, content: item.content })),
+    [
+      { label: "1", content: "第一条知识" },
+      { label: "2", content: "第二条知识" },
+    ],
   );
 });

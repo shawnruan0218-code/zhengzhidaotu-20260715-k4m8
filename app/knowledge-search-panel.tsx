@@ -9,112 +9,15 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import {
-  type KnowledgeAnswer,
-  type KnowledgeEntry,
-  type KnowledgeIndex,
-  type KnowledgeMatch,
-  rankKnowledgeCandidates,
-} from "./lib/knowledge-search";
-import {
-  friendlyKnowledgeError,
-  knowledgeHttpErrorMessage,
-  shouldRetryKnowledgeRequest,
-  waitForKnowledgeRetry,
-} from "./lib/knowledge-request";
-import { withBasePath } from "./lib/app-config";
-import { getSupabaseClient } from "./lib/supabase-client";
+import { loadKnowledgeIndex, searchKnowledge } from "./lib/knowledge-api";
+import type { KnowledgeAnswer, KnowledgeEntry } from "./lib/knowledge-search";
+import { friendlyKnowledgeError } from "./lib/knowledge-request";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   onLocate: (entry: KnowledgeEntry) => void;
 };
-
-type FunctionResponse = {
-  answer?: unknown;
-  matches?: unknown;
-  model?: unknown;
-  usage?: unknown;
-};
-
-let indexPromise: Promise<KnowledgeIndex> | null = null;
-
-function loadKnowledgeIndex() {
-  if (!indexPromise) {
-    indexPromise = fetch(withBasePath("/data/knowledge-index.json")).then(async (response) => {
-      if (!response.ok) throw new Error("图谱文字索引加载失败");
-      return (await response.json()) as KnowledgeIndex;
-    });
-  }
-  return indexPromise;
-}
-
-function normalizeFunctionAnswer(
-  payload: FunctionResponse,
-  candidates: KnowledgeMatch[],
-): KnowledgeAnswer | null {
-  if (typeof payload.answer !== "string" || !Array.isArray(payload.matches)) return null;
-  const candidatesById = new Map(candidates.map((entry) => [entry.id, entry]));
-  const matches = payload.matches
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const record = item as Record<string, unknown>;
-      const candidate = typeof record.id === "string" ? candidatesById.get(record.id) : null;
-      if (!candidate) return null;
-      return {
-        ...candidate,
-        reason: typeof record.reason === "string" ? record.reason : undefined,
-        queryLabels: Array.isArray(record.queryLabels)
-          ? record.queryLabels.filter(
-              (label): label is string => typeof label === "string",
-            )
-          : typeof record.queryLabel === "string"
-            ? [record.queryLabel]
-            : candidate.queryLabels,
-        confidence:
-          typeof record.confidence === "number"
-            ? Math.max(0, Math.min(1, record.confidence))
-            : undefined,
-      };
-    })
-    .filter((match): match is NonNullable<typeof match> => match !== null);
-  if (!matches.length) return null;
-  return {
-    answer: payload.answer,
-    matches,
-    model: typeof payload.model === "string" ? payload.model : undefined,
-    usage:
-      payload.usage &&
-      typeof payload.usage === "object" &&
-      typeof (payload.usage as Record<string, unknown>).promptTokens === "number" &&
-      typeof (payload.usage as Record<string, unknown>).completionTokens === "number" &&
-      typeof (payload.usage as Record<string, unknown>).totalTokens === "number"
-        ? {
-            promptTokens: (payload.usage as Record<string, number>).promptTokens,
-            completionTokens: (payload.usage as Record<string, number>).completionTokens,
-            totalTokens: (payload.usage as Record<string, number>).totalTokens,
-            cachedTokens:
-              typeof (payload.usage as Record<string, unknown>).cachedTokens === "number"
-                ? (payload.usage as Record<string, number>).cachedTokens
-                : 0,
-          }
-        : undefined,
-    localOnly: false,
-  };
-}
-
-function candidatePayload(entry: KnowledgeMatch) {
-  return {
-    id: entry.id,
-    kind: entry.kind,
-    page: entry.page,
-    title: entry.title,
-    text: entry.text,
-    breadcrumb: entry.breadcrumb,
-    queryLabels: entry.queryLabels,
-  };
-}
 
 export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
   const [query, setQuery] = useState("");
@@ -211,60 +114,11 @@ export function KnowledgeSearchPanel({ open, onClose, onLocate }: Props) {
     setAnswer(null);
 
     try {
-      const index = await loadKnowledgeIndex();
+      const modelAnswer = await searchKnowledge(
+        requestedQuery,
+        controller.signal,
+      );
       if (requestId.current !== currentRequest) return;
-      const candidates = rankKnowledgeCandidates(requestedQuery, index.entries, 48);
-      if (!candidates.length) {
-        throw new Error("没有找到足够接近的图谱内容，请粘贴更完整的题干");
-      }
-
-      const client = getSupabaseClient();
-      const session = client ? (await client.auth.getSession()).data.session : null;
-      if (!client || !session) {
-        throw new Error("请先登录账号后使用 AI 检索");
-      }
-
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-      if (!supabaseUrl || !publishableKey) {
-        throw new Error("AI 检索服务尚未配置");
-      }
-
-      const endpoint = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/knowledge-search`;
-      const requestBody = JSON.stringify({
-        query: requestedQuery,
-        candidates: candidates.map(candidatePayload),
-      });
-      let data: FunctionResponse & { error?: unknown } = {};
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            apikey: publishableKey,
-            "Content-Type": "application/json",
-          },
-          body: requestBody,
-          signal: controller.signal,
-        });
-        data = (await response.json().catch(() => ({}))) as FunctionResponse & {
-          error?: unknown;
-        };
-        if (response.ok) break;
-        if (attempt === 0 && shouldRetryKnowledgeRequest(response.status)) {
-          await waitForKnowledgeRetry(650, controller.signal);
-          continue;
-        }
-        throw new Error(
-          knowledgeHttpErrorMessage(
-            response.status,
-            typeof data.error === "string" ? data.error : undefined,
-          ),
-        );
-      }
-      if (requestId.current !== currentRequest) return;
-      const modelAnswer = normalizeFunctionAnswer(data, candidates);
-      if (!modelAnswer) throw new Error("模型返回内容无法匹配图谱词条");
       setAnswer(modelAnswer);
     } catch (reason) {
       if (requestId.current !== currentRequest) return;

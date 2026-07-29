@@ -13,6 +13,7 @@ import {
 } from "react";
 import { AccountControls } from "./account-controls";
 import { AnnotationHistoryDialog } from "./annotation-history-dialog";
+import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
@@ -710,6 +711,7 @@ export function StudyReader() {
   const [summaryOnly, setSummaryOnly] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
+  const [batchKnowledgeSearchOpen, setBatchKnowledgeSearchOpen] = useState(false);
   const [annotationHistoryOpen, setAnnotationHistoryOpen] = useState(false);
   const [knowledgeLocator, setKnowledgeLocator] = useState<
     (KnowledgeEntry & { animationId: number }) | null
@@ -1789,12 +1791,13 @@ export function StudyReader() {
         !event.ctrlKey &&
         !event.altKey &&
         event.key.toLowerCase() === "a" &&
-        !document.querySelector(".account-sheet")
+        !document.querySelector(".account-sheet, .knowledge-sheet")
       ) {
         event.preventDefault();
         if (!event.repeat) {
           setFloatingNoteEntryId(null);
           setOutlineOpen(false);
+          setBatchKnowledgeSearchOpen(false);
           setKnowledgeSearchOpen(true);
         }
         return;
@@ -2304,12 +2307,28 @@ export function StudyReader() {
           type="button"
           className={`knowledge-toggle ${knowledgeSearchOpen ? "active" : ""}`}
           aria-haspopup="dialog"
-          onClick={() => setKnowledgeSearchOpen(true)}
+          onClick={() => {
+            setBatchKnowledgeSearchOpen(false);
+            setKnowledgeSearchOpen(true);
+          }}
           title="快捷键 A"
         >
           <span className="knowledge-toggle-icon" aria-hidden="true" />
           AI 检索
           <span className="knowledge-shortcut" aria-label="快捷键 A">A</span>
+        </button>
+
+        <button
+          type="button"
+          className={`knowledge-toggle knowledge-batch-toggle ${batchKnowledgeSearchOpen ? "active" : ""}`}
+          aria-haspopup="dialog"
+          onClick={() => {
+            setKnowledgeSearchOpen(false);
+            setBatchKnowledgeSearchOpen(true);
+          }}
+        >
+          <span className="knowledge-batch-toggle-icon" aria-hidden="true">≋</span>
+          增强检索
         </button>
 
         <div className="toolbar-group version-controls" aria-label="复习版本">
@@ -2639,6 +2658,12 @@ export function StudyReader() {
       <KnowledgeSearchPanel
         open={knowledgeSearchOpen}
         onClose={() => setKnowledgeSearchOpen(false)}
+        onLocate={locateKnowledgeEntry}
+      />
+
+      <BatchKnowledgeSearchPanel
+        open={batchKnowledgeSearchOpen}
+        onClose={() => setBatchKnowledgeSearchOpen(false)}
         onLocate={locateKnowledgeEntry}
       />
 
