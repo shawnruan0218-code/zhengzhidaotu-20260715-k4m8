@@ -1718,8 +1718,8 @@ kbd {
   right: 18px;
   width: min(900px, calc(100vw - 24px));
   height: min(760px, calc(100dvh - 24px));
-  min-width: min(400px, calc(100vw - 16px));
-  min-height: min(440px, calc(100dvh - 16px));
+  min-width: min(300px, calc(100vw - 16px));
+  min-height: min(300px, calc(100dvh - 16px));
   max-width: calc(100vw - 16px);
   max-height: calc(100dvh - 16px);
   resize: both;
@@ -2047,6 +2047,17 @@ kbd {
   border-color: rgba(0, 122, 255, 0.11);
 }
 
+.batch-status-card.is-retrying {
+  padding: 18px;
+  text-align: center;
+  background: rgba(255, 159, 10, 0.065);
+  border-color: rgba(255, 159, 10, 0.18);
+}
+
+.batch-status-card.is-retrying strong {
+  color: #9a5b00;
+}
+
 .batch-status-card.is-error strong {
   color: #c9342c;
 }
@@ -2116,6 +2127,18 @@ kbd {
 
 .batch-result-navigation > div button.is-searching {
   background: #0a84ff;
+}
+
+.batch-result-navigation > div button.is-retrying {
+  background: #ff9f0a;
+  animation: batch-retry-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes batch-retry-pulse {
+  50% {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
 }
 
 .batch-result-navigation > div button.is-current {

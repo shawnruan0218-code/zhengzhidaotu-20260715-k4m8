@@ -9,6 +9,7 @@ import {
 } from "../app/lib/knowledge-search.ts";
 import {
   friendlyKnowledgeError,
+  isTransientKnowledgeError,
   knowledgeHttpErrorMessage,
   shouldRetryKnowledgeRequest,
 } from "../app/lib/knowledge-request.ts";
@@ -172,6 +173,14 @@ test("transient AI service failures are retried and shown in Chinese", () => {
   assert.equal(
     knowledgeHttpErrorMessage(504),
     "AI 检索等待时间过长，请重新检索",
+  );
+  assert.equal(
+    isTransientKnowledgeError(new Error("硅基流动暂时不可用")),
+    true,
+  );
+  assert.equal(
+    isTransientKnowledgeError(new Error("模型返回内容无法匹配图谱词条")),
+    false,
   );
 });
 

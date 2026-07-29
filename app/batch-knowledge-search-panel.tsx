@@ -17,7 +17,11 @@ import {
 } from "./lib/batch-knowledge-search";
 import { searchKnowledge } from "./lib/knowledge-api";
 import type { KnowledgeAnswer, KnowledgeEntry } from "./lib/knowledge-search";
-import { friendlyKnowledgeError } from "./lib/knowledge-request";
+import {
+  friendlyKnowledgeError,
+  isTransientKnowledgeError,
+  waitForKnowledgeRetry,
+} from "./lib/knowledge-request";
 
 type Props = {
   open: boolean;
@@ -25,13 +29,14 @@ type Props = {
   onLocate: (entry: KnowledgeEntry) => void;
 };
 
-type BatchStatus = "queued" | "searching" | "done" | "error";
+type BatchStatus = "queued" | "searching" | "retrying" | "done" | "error";
 
 type BatchItem = ReviewClipItem & {
   query: string;
   status: BatchStatus;
   answer?: KnowledgeAnswer;
   error?: string;
+  retryCount?: number;
 };
 
 type FloatingPosition = {
@@ -39,7 +44,18 @@ type FloatingPosition = {
   top: number;
 };
 
-const BATCH_CONCURRENCY = 3;
+const BATCH_CONCURRENCY = 2;
+const BATCH_REQUEST_GAP_MS = 1_200;
+const BATCH_RETRY_DELAYS_MS = [
+  2_500,
+  5_000,
+  10_000,
+  16_000,
+  24_000,
+  30_000,
+  45_000,
+  60_000,
+];
 
 export function BatchKnowledgeSearchPanel({
   open,
@@ -76,6 +92,7 @@ export function BatchKnowledgeSearchPanel({
     (item) => item.status === "done" || item.status === "error",
   ).length;
   const successCount = items.filter((item) => item.status === "done").length;
+  const errorCount = items.filter((item) => item.status === "error").length;
   const progressPercent = items.length
     ? Math.round((completedCount / items.length) * 100)
     : 0;
@@ -100,7 +117,7 @@ export function BatchKnowledgeSearchPanel({
     setRunning(false);
     setItems((current) =>
       current.map((item) =>
-        item.status === "searching"
+        item.status === "searching" || item.status === "retrying"
           ? { ...item, status: "queued", error: undefined }
           : item,
       ),
@@ -194,25 +211,78 @@ export function BatchKnowledgeSearchPanel({
     setRunning(true);
 
     let nextIndex = 0;
-    const worker = async () => {
-      while (nextIndex < prepared.length && !controller.signal.aborted) {
-        const itemIndex = nextIndex;
-        nextIndex += 1;
+    let nextRequestAt = 0;
+    let requestGate: Promise<void> = Promise.resolve();
+    const waitForRequestSlot = () => {
+      const slot = requestGate.then(async () => {
+        const delay = Math.max(0, nextRequestAt - Date.now());
+        if (delay > 0) {
+          await waitForKnowledgeRetry(delay, controller.signal);
+        }
+        nextRequestAt = Date.now() + BATCH_REQUEST_GAP_MS;
+      });
+      requestGate = slot.catch(() => undefined);
+      return slot;
+    };
+
+    const searchItemWithRetry = async (itemIndex: number) => {
+      const item = prepared[itemIndex];
+      let retryCount = 0;
+      while (!controller.signal.aborted) {
+        if (retryCount > 0) {
+          const retryDelay = BATCH_RETRY_DELAYS_MS[retryCount - 1];
+          updateItem(itemIndex, {
+            status: "retrying",
+            retryCount,
+            error: `AI 服务繁忙，正在自动等待后继续（第 ${retryCount} 次重试）`,
+          });
+          await waitForKnowledgeRetry(retryDelay, controller.signal);
+        }
+
+        await waitForRequestSlot();
         updateItem(itemIndex, {
           status: "searching",
+          retryCount,
           answer: undefined,
           error: undefined,
         });
         try {
-          const answer = await searchKnowledge(
-            prepared[itemIndex].query,
-            controller.signal,
-          );
+          return await searchKnowledge(item.query, controller.signal);
+        } catch (reason) {
+          if (
+            controller.signal.aborted ||
+            (reason instanceof DOMException && reason.name === "AbortError")
+          ) {
+            throw reason;
+          }
+          if (
+            isTransientKnowledgeError(reason) &&
+            retryCount < BATCH_RETRY_DELAYS_MS.length
+          ) {
+            retryCount += 1;
+            continue;
+          }
+          throw reason;
+        }
+      }
+      throw new DOMException("Aborted", "AbortError");
+    };
+
+    const worker = async () => {
+      while (nextIndex < prepared.length && !controller.signal.aborted) {
+        const itemIndex = nextIndex;
+        nextIndex += 1;
+        try {
+          const answer = await searchItemWithRetry(itemIndex);
           if (
             controller.signal.aborted ||
             batchRunId.current !== runId
           ) return;
-          updateItem(itemIndex, { status: "done", answer, error: undefined });
+          updateItem(itemIndex, {
+            status: "done",
+            answer,
+            error: undefined,
+          });
         } catch (reason) {
           if (
             controller.signal.aborted ||
@@ -222,6 +292,7 @@ export function BatchKnowledgeSearchPanel({
           updateItem(itemIndex, {
             status: "error",
             answer: undefined,
+            retryCount: undefined,
             error: friendlyKnowledgeError(reason),
           });
         }
@@ -390,9 +461,15 @@ export function BatchKnowledgeSearchPanel({
                 <strong>
                   {running
                     ? `正在批量检索 ${completedCount}/${items.length}`
-                    : `已完成 ${successCount}/${items.length}`}
+                    : `批量检索结束 · 成功 ${successCount}/${items.length}`}
                 </strong>
-                <span>{running ? "同时处理 3 条，可随时取消" : "可逐条查看、编辑或重新检索"}</span>
+                <span>
+                  {running
+                    ? "自动限速处理；服务繁忙时会等待后继续，无需手动点击"
+                    : errorCount
+                      ? `${errorCount} 条需要检查，可编辑后重新检索`
+                      : "全部完成，可逐条查看或编辑"}
+                </span>
               </div>
               <div className="batch-progress-actions">
                 {running && (
@@ -474,6 +551,12 @@ export function BatchKnowledgeSearchPanel({
                     <div className="batch-status-card is-searching">
                       <strong>正在定位对应知识点…</strong>
                       <span>正在检索全书文字并让模型判断。</span>
+                    </div>
+                  )}
+                  {currentItem.status === "retrying" && (
+                    <div className="batch-status-card is-retrying">
+                      <strong>{currentItem.error}</strong>
+                      <span>任务仍在运行，请保持页面打开，无需手动重试。</span>
                     </div>
                   )}
                   {currentItem.status === "error" && (

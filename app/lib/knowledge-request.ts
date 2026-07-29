@@ -42,6 +42,13 @@ export function friendlyKnowledgeError(reason: unknown): string {
   return message || "检索失败，请稍后重试";
 }
 
+export function isTransientKnowledgeError(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message.trim() : String(reason ?? "");
+  return /硅基流动暂时不可用|AI 服务暂时繁忙|当前检索人数较多|服务连接不稳定|网络连接不稳定|edge function returned a non-2xx status code|functions?httperror|failed to fetch|networkerror|load failed/i.test(
+    message,
+  );
+}
+
 export function waitForKnowledgeRetry(
   delayMs: number,
   signal: AbortSignal,
