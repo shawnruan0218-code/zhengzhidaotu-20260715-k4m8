@@ -47,6 +47,7 @@ export function AnnotationHistoryDialog({
     null,
   );
   const [miniMode, setMiniMode] = useState(false);
+  const [miniCalendarOpen, setMiniCalendarOpen] = useState(false);
   const [miniPosition, setMiniPosition] = useState<MiniPosition | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
@@ -82,6 +83,7 @@ export function AnnotationHistoryDialog({
   const closeHistory = () => {
     miniDragRef.current = null;
     setMiniMode(false);
+    setMiniCalendarOpen(false);
     setMiniPosition(null);
     onClose();
   };
@@ -181,15 +183,30 @@ export function AnnotationHistoryDialog({
             onPointerUp={stopMiniDrag}
             onPointerCancel={stopMiniDrag}
           >
-            <button
-              type="button"
-              className="annotation-history-mini-close"
-              aria-label="关闭批注历史小窗"
-              title="关闭小窗"
-              onClick={closeHistory}
-            >
-              ×
-            </button>
+            <div className="annotation-history-mini-controls">
+              <button
+                type="button"
+                className="annotation-history-mini-close"
+                aria-label="关闭批注历史小窗"
+                title="关闭小窗"
+                onClick={closeHistory}
+              >
+                ×
+              </button>
+              <button
+                type="button"
+                className={[
+                  "annotation-history-mini-calendar",
+                  miniCalendarOpen ? "is-active" : "",
+                ].filter(Boolean).join(" ")}
+                aria-label="切换其它日期"
+                aria-expanded={miniCalendarOpen}
+                title="打开日历切换日期"
+                onClick={() => setMiniCalendarOpen((current) => !current)}
+              >
+                日
+              </button>
+            </div>
             <div>
               <strong id="annotation-history-title">当日批注</strong>
               <span>拖动标题栏移动 · 右下角缩放</span>
@@ -244,10 +261,11 @@ export function AnnotationHistoryDialog({
             active={open}
             dayOnly={miniMode}
             lastVisitedRecordId={lastVisitedRecordId}
+            showDayPicker={miniMode && miniCalendarOpen}
             records={records}
+            onDayPicked={() => setMiniCalendarOpen(false)}
             onJump={(record) => {
               setLastVisitedRecordId(record.id);
-              closeHistory();
               onJump(record);
             }}
           />

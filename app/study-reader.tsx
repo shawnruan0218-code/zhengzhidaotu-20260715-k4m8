@@ -1749,6 +1749,24 @@ export function StudyReader() {
         return;
       }
 
+      const isBatchToggle =
+        !isTyping &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "b";
+
+      if (isBatchToggle) {
+        event.preventDefault();
+        if (!event.repeat) {
+          setFloatingNoteEntryId(null);
+          setOutlineOpen(false);
+          setKnowledgeSearchOpen(false);
+          setBatchKnowledgeSearchOpen((current) => !current);
+        }
+        return;
+      }
+
       if (annotationHistoryOpen) {
         const isHistoryToggle =
           !isTyping &&
@@ -2326,9 +2344,11 @@ export function StudyReader() {
             setKnowledgeSearchOpen(false);
             setBatchKnowledgeSearchOpen(true);
           }}
+          title="快捷键 B"
         >
           <span className="knowledge-batch-toggle-icon" aria-hidden="true">≋</span>
           增强检索
+          <span className="knowledge-shortcut" aria-label="快捷键 B">B</span>
         </button>
 
         <div className="toolbar-group version-controls" aria-label="复习版本">

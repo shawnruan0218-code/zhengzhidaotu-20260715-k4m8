@@ -7,8 +7,10 @@ type Props = {
   active?: boolean;
   dayOnly?: boolean;
   lastVisitedRecordId?: string | null;
+  showDayPicker?: boolean;
   records: AnnotationRecord[];
   onJump: (record: AnnotationRecord) => void;
+  onDayPicked?: () => void;
 };
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
@@ -36,8 +38,10 @@ export function AnnotationCalendar({
   active = true,
   dayOnly = false,
   lastVisitedRecordId = null,
+  showDayPicker = false,
   records,
   onJump,
+  onDayPicked,
 }: Props) {
   const today = useMemo(() => new Date(), []);
   const todayKey = localDayKey(today);
@@ -231,9 +235,62 @@ export function AnnotationCalendar({
     </section>
   );
 
+  const calendarHeader = (
+    <header className="annotation-calendar-header">
+      <div>
+        <strong>{year}年{monthIndex + 1}月</strong>
+        <span>点击有数字的日期查看批注</span>
+      </div>
+      <div className="annotation-calendar-nav">
+        <button type="button" aria-label="上个月" onClick={() => changeMonth(-1)}>‹</button>
+        <button type="button" onClick={chooseToday}>今天</button>
+        <button type="button" aria-label="下个月" onClick={() => changeMonth(1)}>›</button>
+      </div>
+    </header>
+  );
+
+  const calendarGrid = (
+    <div className="annotation-calendar-grid" aria-label={`${year}年${monthIndex + 1}月批注日历`}>
+      {WEEKDAYS.map((weekday) => (
+        <span className="annotation-weekday" key={weekday}>{weekday}</span>
+      ))}
+      {calendarCells.map((cell, index) =>
+        cell ? (
+          <button
+            type="button"
+            className={[
+              "annotation-calendar-day",
+              cell.dayKey === selectedDay ? "is-selected" : "",
+              cell.dayKey === todayKey ? "is-today" : "",
+              cell.count ? "has-records" : "",
+            ].filter(Boolean).join(" ")}
+            aria-label={`${cell.day}日${cell.count ? `，${cell.count}条批注` : "，无批注"}`}
+            aria-pressed={cell.dayKey === selectedDay}
+            key={cell.dayKey}
+            onClick={() => {
+              setSelectedDay(cell.dayKey);
+              onDayPicked?.();
+            }}
+          >
+            <span>{cell.day}</span>
+            {cell.count > 0 && <i>{cell.count}</i>}
+          </button>
+        ) : (
+          <span className="annotation-calendar-empty" key={`empty-${index}`} />
+        ),
+      )}
+    </div>
+  );
+
   if (dayOnly) {
     return (
       <div className="annotation-calendar annotation-calendar-day-only">
+        {showDayPicker && (
+          <section className="annotation-mini-day-picker" aria-label="切换批注日期">
+            {calendarHeader}
+            {calendarGrid}
+          </section>
+        )}
         {selectedDayRecords}
       </div>
     );
@@ -241,45 +298,8 @@ export function AnnotationCalendar({
 
   return (
     <div className="annotation-calendar">
-      <header className="annotation-calendar-header">
-        <div>
-          <strong>{year}年{monthIndex + 1}月</strong>
-          <span>点击有数字的日期查看批注</span>
-        </div>
-        <div className="annotation-calendar-nav">
-          <button type="button" aria-label="上个月" onClick={() => changeMonth(-1)}>‹</button>
-          <button type="button" onClick={chooseToday}>今天</button>
-          <button type="button" aria-label="下个月" onClick={() => changeMonth(1)}>›</button>
-        </div>
-      </header>
-
-      <div className="annotation-calendar-grid" aria-label={`${year}年${monthIndex + 1}月批注日历`}>
-        {WEEKDAYS.map((weekday) => (
-          <span className="annotation-weekday" key={weekday}>{weekday}</span>
-        ))}
-        {calendarCells.map((cell, index) =>
-          cell ? (
-            <button
-              type="button"
-              className={[
-                "annotation-calendar-day",
-                cell.dayKey === selectedDay ? "is-selected" : "",
-                cell.dayKey === todayKey ? "is-today" : "",
-                cell.count ? "has-records" : "",
-              ].filter(Boolean).join(" ")}
-              aria-label={`${cell.day}日${cell.count ? `，${cell.count}条批注` : "，无批注"}`}
-              aria-pressed={cell.dayKey === selectedDay}
-              key={cell.dayKey}
-              onClick={() => setSelectedDay(cell.dayKey)}
-            >
-              <span>{cell.day}</span>
-              {cell.count > 0 && <i>{cell.count}</i>}
-            </button>
-          ) : (
-            <span className="annotation-calendar-empty" key={`empty-${index}`} />
-          ),
-        )}
-      </div>
+      {calendarHeader}
+      {calendarGrid}
 
       {selectedDayRecords}
 

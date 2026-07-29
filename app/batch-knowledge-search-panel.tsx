@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  type CSSProperties,
   type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -32,6 +34,11 @@ type BatchItem = ReviewClipItem & {
   error?: string;
 };
 
+type FloatingPosition = {
+  left: number;
+  top: number;
+};
+
 const BATCH_CONCURRENCY = 3;
 
 export function BatchKnowledgeSearchPanel({
@@ -46,9 +53,19 @@ export function BatchKnowledgeSearchPanel({
   const [importError, setImportError] = useState("");
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState("");
+  const [floatingPosition, setFloatingPosition] =
+    useState<FloatingPosition | null>(null);
   const batchRunId = useRef(0);
   const batchController = useRef<AbortController | null>(null);
   const itemControllers = useRef(new Map<string, AbortController>());
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    left: number;
+    top: number;
+  } | null>(null);
 
   const parsedPreview = useMemo(
     () => parseReviewClipboard(sourceText),
@@ -106,6 +123,53 @@ export function BatchKnowledgeSearchPanel({
     },
     [],
   );
+
+  const handleHeaderPointerDown = (
+    event: ReactPointerEvent<HTMLElement>,
+  ) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, textarea, select")) return;
+    const rect = sheetRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top,
+    };
+  };
+
+  const handleHeaderPointerMove = (
+    event: ReactPointerEvent<HTMLElement>,
+  ) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const rect = sheetRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setFloatingPosition({
+      left: Math.min(
+        Math.max(8, drag.left + event.clientX - drag.startX),
+        Math.max(8, window.innerWidth - rect.width - 8),
+      ),
+      top: Math.min(
+        Math.max(8, drag.top + event.clientY - drag.startY),
+        Math.max(8, window.innerHeight - rect.height - 8),
+      ),
+    });
+  };
+
+  const stopHeaderDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
 
   const startBatch = async () => {
     const parsed = parseReviewClipboard(sourceText);
@@ -241,20 +305,34 @@ export function BatchKnowledgeSearchPanel({
     <div
       className="knowledge-backdrop batch-knowledge-backdrop"
       role="presentation"
-      onMouseDown={onClose}
     >
       <section
+        ref={sheetRef}
         className="knowledge-sheet batch-knowledge-sheet"
         role="dialog"
-        aria-modal="true"
         aria-labelledby="batch-knowledge-title"
+        style={
+          floatingPosition
+            ? {
+                left: `${floatingPosition.left}px`,
+                top: `${floatingPosition.top}px`,
+                right: "auto",
+              } as CSSProperties
+            : undefined
+        }
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <header className="knowledge-sheet-header batch-knowledge-header">
+        <header
+          className="knowledge-sheet-header batch-knowledge-header"
+          onPointerDown={handleHeaderPointerDown}
+          onPointerMove={handleHeaderPointerMove}
+          onPointerUp={stopHeaderDrag}
+          onPointerCancel={stopHeaderDrag}
+        >
           <div>
             <span>复习剪贴 · 批量定位</span>
             <h2 id="batch-knowledge-title">增强检索</h2>
-            <p>自动忽略图片与收集时间，按分割线逐条检索图谱。</p>
+            <p>拖动标题栏移动 · 右下角缩放 · 按 B 打开或关闭</p>
           </div>
           <button
             type="button"
@@ -422,10 +500,7 @@ export function BatchKnowledgeSearchPanel({
                             type="button"
                             className="knowledge-result"
                             key={`${match.id}-${matchIndex}`}
-                            onClick={() => {
-                              onLocate(match);
-                              onClose();
-                            }}
+                            onClick={() => onLocate(match)}
                           >
                             <span className="knowledge-result-rank">
                               {matchIndex + 1}

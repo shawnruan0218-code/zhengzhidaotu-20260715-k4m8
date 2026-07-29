@@ -1713,12 +1713,48 @@ kbd {
 }
 
 .batch-knowledge-sheet {
-  width: min(1040px, 100%);
-  height: min(90dvh, 900px);
-  max-height: min(90dvh, 900px);
+  position: fixed;
+  top: max(12px, calc((100dvh - min(760px, calc(100dvh - 24px))) / 2));
+  right: 18px;
+  width: min(900px, calc(100vw - 24px));
+  height: min(760px, calc(100dvh - 24px));
+  min-width: min(400px, calc(100vw - 16px));
+  min-height: min(440px, calc(100dvh - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  resize: both;
+  pointer-events: auto;
   background:
     radial-gradient(circle at 5% 0%, rgba(124, 58, 237, 0.07), transparent 27%),
     rgba(250, 250, 252, 0.98);
+}
+
+.batch-knowledge-backdrop {
+  display: block;
+  padding: 0;
+  pointer-events: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+}
+
+.batch-knowledge-backdrop[hidden] {
+  display: none;
+}
+
+.batch-knowledge-header {
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.batch-knowledge-header:active {
+  cursor: grabbing;
+}
+
+.batch-knowledge-header button {
+  cursor: pointer;
 }
 
 .batch-knowledge-header > div > span {
@@ -2988,7 +3024,7 @@ kbd {
   display: grid;
   min-height: 58px;
   padding: 9px 13px;
-  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
   align-items: center;
   gap: 9px;
   user-select: none;
@@ -3000,6 +3036,12 @@ kbd {
 
 .annotation-history-mini-header:active {
   cursor: grabbing;
+}
+
+.annotation-history-mini-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .annotation-history-mini-close {
@@ -3015,6 +3057,27 @@ kbd {
   border: 0;
   border-radius: 50%;
   cursor: pointer;
+}
+
+.annotation-history-mini-calendar {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  color: #6e3c78;
+  font-size: 10px;
+  font-weight: 760;
+  background: rgba(175, 82, 222, 0.1);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.annotation-history-mini-calendar:hover,
+.annotation-history-mini-calendar.is-active {
+  color: #fff;
+  background: #9a44bf;
 }
 
 .annotation-history-mini-close:hover {
@@ -3057,6 +3120,62 @@ kbd {
   min-height: 0;
   height: auto;
   padding: 0;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: rgba(175, 82, 222, 0.055);
+  border: 1px solid rgba(175, 82, 222, 0.13);
+  border-radius: 14px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-header {
+  margin-bottom: 10px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-header strong {
+  font-size: 14px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-header span {
+  display: none;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-nav button {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 10px;
+  border-radius: 8px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-grid {
+  gap: 4px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-weekday {
+  padding-bottom: 3px;
+  font-size: 8px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-day,
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-empty {
+  min-height: 30px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-day {
+  font-size: 10px;
+  border-radius: 8px;
+}
+
+.annotation-history-content.is-mini .annotation-mini-day-picker .annotation-calendar-day i {
+  right: 2px;
+  bottom: 2px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  font-size: 6px;
 }
 
 .annotation-history-content.is-mini .annotation-day-records {
@@ -3951,8 +4070,14 @@ kbd {
   }
 
   .batch-knowledge-sheet {
-    height: calc(100dvh - 20px);
-    max-height: calc(100dvh - 20px);
+    top: 8px;
+    right: 8px;
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    min-width: 0;
+    min-height: 0;
+    max-height: calc(100dvh - 16px);
+    resize: none;
   }
 
   .batch-import-footer,
