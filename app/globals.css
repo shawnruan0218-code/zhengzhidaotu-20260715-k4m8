@@ -1975,6 +1975,24 @@ kbd {
   gap: 2px;
 }
 
+.batch-current-source > header > .batch-current-source-actions {
+  flex: 0 0 auto;
+  flex-direction: row;
+  gap: 7px;
+}
+
+.batch-current-source-actions button.is-copied {
+  color: #187a36;
+  background: rgba(52, 199, 89, 0.1);
+  border-color: rgba(52, 199, 89, 0.24);
+}
+
+.batch-current-source-actions button.is-failed {
+  color: #c9342c;
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.2);
+}
+
 .batch-current-source header span {
   color: #8e8e93;
   font-size: 9px;

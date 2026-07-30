@@ -44,6 +44,11 @@ type FloatingPosition = {
   top: number;
 };
 
+type CopyFeedback = {
+  itemId: string;
+  state: "copied" | "failed";
+};
+
 const BATCH_CONCURRENCY = 2;
 const BATCH_REQUEST_GAP_MS = 1_200;
 const BATCH_RETRY_DELAYS_MS = [
@@ -71,9 +76,11 @@ export function BatchKnowledgeSearchPanel({
   const [editDraft, setEditDraft] = useState("");
   const [floatingPosition, setFloatingPosition] =
     useState<FloatingPosition | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
   const batchRunId = useRef(0);
   const batchController = useRef<AbortController | null>(null);
   const itemControllers = useRef(new Map<string, AbortController>());
+  const copyFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -137,9 +144,50 @@ export function BatchKnowledgeSearchPanel({
     () => () => {
       batchController.current?.abort();
       itemControllers.current.forEach((controller) => controller.abort());
+      if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current);
     },
     [],
   );
+
+  const copyCurrentItem = async (item: BatchItem) => {
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(item.query);
+        copied = true;
+      }
+    } catch {
+      // Use the selection fallback below when clipboard permission is unavailable.
+    }
+
+    if (!copied) {
+      const textarea = document.createElement("textarea");
+      textarea.value = item.query;
+      textarea.readOnly = true;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      } finally {
+        textarea.remove();
+      }
+    }
+
+    setCopyFeedback({
+      itemId: item.id,
+      state: copied ? "copied" : "failed",
+    });
+    if (copyFeedbackTimer.current) clearTimeout(copyFeedbackTimer.current);
+    copyFeedbackTimer.current = setTimeout(
+      () => setCopyFeedback(null),
+      copied ? 1_500 : 2_200,
+    );
+  };
 
   const handleHeaderPointerDown = (
     event: ReactPointerEvent<HTMLElement>,
@@ -501,16 +549,34 @@ export function BatchKnowledgeSearchPanel({
                       <strong>复习剪贴 #{currentItem.label}</strong>
                     </div>
                     {!editing && (
-                      <button
-                        type="button"
-                        disabled={running || currentItem.status === "searching"}
-                        onClick={() => {
-                          setEditDraft(currentItem.query);
-                          setEditing(true);
-                        }}
-                      >
-                        编辑本条
-                      </button>
+                      <div className="batch-current-source-actions">
+                        <button
+                          type="button"
+                          className={
+                            copyFeedback?.itemId === currentItem.id
+                              ? `is-${copyFeedback.state}`
+                              : undefined
+                          }
+                          aria-live="polite"
+                          onClick={() => void copyCurrentItem(currentItem)}
+                        >
+                          {copyFeedback?.itemId === currentItem.id
+                            ? copyFeedback.state === "copied"
+                              ? "已复制"
+                              : "复制失败"
+                            : "复制本条"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={running || currentItem.status === "searching"}
+                          onClick={() => {
+                            setEditDraft(currentItem.query);
+                            setEditing(true);
+                          }}
+                        >
+                          编辑本条
+                        </button>
+                      </div>
                     )}
                   </header>
                   {editing ? (
