@@ -133,12 +133,27 @@ export function BatchKnowledgeSearchPanel({
 
   useEffect(() => {
     if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+    const handlePanelShortcut = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (
+        event.key === "Tab" &&
+        !event.shiftKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        items.length > 0 &&
+        !editing
+      ) {
+        event.preventDefault();
+        setCurrentIndex((index) => Math.min(items.length - 1, index + 1));
+      }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, open]);
+    window.addEventListener("keydown", handlePanelShortcut);
+    return () => window.removeEventListener("keydown", handlePanelShortcut);
+  }, [editing, items.length, onClose, open]);
 
   useEffect(
     () => () => {
@@ -451,7 +466,7 @@ export function BatchKnowledgeSearchPanel({
           <div>
             <span>复习剪贴 · 批量定位</span>
             <h2 id="batch-knowledge-title">增强检索</h2>
-            <p>拖动标题栏移动 · 右下角缩放 · 按 B 打开或关闭</p>
+            <p>拖动标题栏移动 · 右下角缩放 · Tab 下一条 · B 打开或关闭</p>
           </div>
           <button
             type="button"
