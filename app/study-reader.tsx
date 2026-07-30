@@ -1781,8 +1781,13 @@ export function StudyReader() {
         if (event.key === "Escape" || isHistoryToggle) {
           event.preventDefault();
           setAnnotationHistoryOpen(false);
+          return;
         }
-        return;
+        const isOutsideEntryNotePreview =
+          !isTyping &&
+          interactionMode === "entry" &&
+          (event.code === "Space" || event.key === " ");
+        if (!isOutsideEntryNotePreview) return;
       }
 
       if (event.key === "Escape" && outlineOpen) {
