@@ -72,6 +72,13 @@ export function AnnotationHistoryDialog({
     setPortalReady(true);
   }, []);
 
+  const resetSheetDimensions = () => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.style.removeProperty("width");
+    sheet.style.removeProperty("height");
+  };
+
   const handleContentScroll = (event: UIEvent<HTMLDivElement>) => {
     setShowReturnToTop(event.currentTarget.scrollTop > 180);
   };
@@ -82,6 +89,7 @@ export function AnnotationHistoryDialog({
 
   const closeHistory = () => {
     miniDragRef.current = null;
+    resetSheetDimensions();
     setMiniMode(false);
     setMiniCalendarOpen(false);
     setMiniPosition(null);
@@ -89,6 +97,7 @@ export function AnnotationHistoryDialog({
   };
 
   const enterMiniMode = () => {
+    resetSheetDimensions();
     const width = Math.min(520, Math.max(340, window.innerWidth - 24));
     const height = Math.min(640, Math.max(360, window.innerHeight - 24));
     setMiniPosition({
