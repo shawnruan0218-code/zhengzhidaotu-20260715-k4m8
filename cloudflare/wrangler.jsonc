@@ -1,0 +1,19 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "zhengzhidaotu-20260715-k4m8-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-02",
+  "workers_dev": true,
+  "vars": {
+    "APP_ORIGINS": "https://shawnruan0218-code.github.io,http://localhost:3000,http://127.0.0.1:3000",
+    "SILICONFLOW_MODEL": "Qwen/Qwen3.5-35B-A3B"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zhengzhidaotu-20260715-k4m8-db",
+      "database_id": "1169e18d-2dee-4517-b390-a04859bdaa2b",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

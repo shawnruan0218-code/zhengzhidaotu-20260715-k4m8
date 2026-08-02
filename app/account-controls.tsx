@@ -1,10 +1,9 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
-import { SUPABASE_USAGE_TABLE } from "./lib/app-config";
-import { getSupabaseClient } from "./lib/supabase-client";
+import { cloudflareRequest } from "./lib/cloudflare-client";
 import type { AnnotationRecord } from "./lib/study-types";
 import type { CloudSyncController } from "./lib/use-cloud-sync";
 
@@ -55,10 +54,7 @@ function formatCost(value: number): string {
 
 function friendlyAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : "操作失败，请稍后重试";
-  if (/invalid login credentials/i.test(message)) return "邮箱或密码不正确";
-  if (/email not confirmed/i.test(message)) return "请先打开验证邮件完成邮箱验证";
-  if (/already registered|already been registered/i.test(message)) return "该邮箱已在本项目注册，请直接登录";
-  if (/password should be at least/i.test(message)) return "密码长度不足，请至少输入 6 位";
+  if (/登录状态已失效/i.test(message)) return "GitHub 登录状态已失效，请重新登录";
   if (/rate limit/i.test(message)) return "操作太频繁，请稍后再试";
   if (/fetch|network/i.test(message)) return "网络连接失败，本地数据不受影响";
   return message;
@@ -72,9 +68,6 @@ export function AccountControls({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [panel, setPanel] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [usage, setUsage] = useState<AccountUsage>(EMPTY_USAGE);
@@ -82,28 +75,15 @@ export function AccountControls({
 
   useEffect(() => {
     if (!open || !cloud.user) {
-      setUsageState("idle");
       return;
     }
 
-    const client = getSupabaseClient();
-    if (!client) return;
     let cancelled = false;
     setUsageState("loading");
 
-    void client
-      .from(SUPABASE_USAGE_TABLE)
-      .select(
-        "prompt_tokens,completion_tokens,total_tokens,cached_tokens,request_count,estimated_cost_cny,last_model",
-      )
-      .eq("user_id", cloud.user.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
+    void cloudflareRequest<{ usage: Record<string, unknown> | null }>("/usage", { method: "GET" })
+      .then(({ usage: data }) => {
         if (cancelled) return;
-        if (error) {
-          setUsageState("error");
-          return;
-        }
         if (!data) {
           setUsage(EMPTY_USAGE);
           setUsageState("ready");
@@ -119,6 +99,9 @@ export function AccountControls({
           lastModel: typeof data.last_model === "string" ? data.last_model : null,
         });
         setUsageState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setUsageState("error");
       });
 
     return () => {
@@ -128,33 +111,12 @@ export function AccountControls({
 
   const close = () => {
     setOpen(false);
-    setPassword("");
     setMessage("");
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!email.trim() || !password) return;
-    setBusy(true);
+  const handleSignIn = () => {
     setMessage("");
-    try {
-      if (panel === "register") {
-        const result = await cloud.signUp(email.trim(), password);
-        if (result === "verify-email") {
-          setMessage("注册成功。请打开验证邮件，验证后再回到这里登录。");
-        } else {
-          close();
-        }
-      } else {
-        await cloud.signIn(email.trim(), password);
-        close();
-      }
-    } catch (error) {
-      setMessage(friendlyAuthError(error));
-    } finally {
-      setPassword("");
-      setBusy(false);
-    }
+    cloud.signIn();
   };
 
   const handleSync = async () => {
@@ -193,7 +155,7 @@ export function AccountControls({
           className="account-entry-button"
           onClick={() => setOpen(true)}
           disabled={!cloud.authReady}
-          title={cloud.user?.email ?? "登录后可跨设备同步"}
+          title={cloud.user?.email ?? (cloud.user ? `@${cloud.user.login}` : "使用 GitHub 登录后可跨设备同步")}
         >
           <span className="account-entry-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
@@ -204,7 +166,7 @@ export function AccountControls({
             <strong>账号</strong>
             <span className="account-entry-meta">
               <i className={`sync-dot sync-${cloud.status}`} aria-hidden="true" />
-              <span>{cloud.user?.email ? cloud.user.email.split("@")[0] : cloud.authReady ? cloud.statusText : "正在读取账号"}</span>
+              <span>{cloud.user ? cloud.user.name || cloud.user.login : cloud.authReady ? cloud.statusText : "正在读取账号"}</span>
             </span>
           </span>
           <span className="account-entry-chevron" aria-hidden="true">›</span>
@@ -231,13 +193,14 @@ export function AccountControls({
             {!cloud.configured ? (
               <div className="cloud-not-configured">
                 <strong>当前为本地模式</strong>
-                <p>高亮和批注会立即保存在这台设备。完成项目专属 Supabase 配置后，注册和跨设备同步会自动启用。</p>
+                <p>高亮和批注会立即保存在这台设备。完成项目专属 Cloudflare 免费云端配置后，跨设备同步会自动启用。</p>
               </div>
             ) : cloud.user ? (
               <div className="signed-in-panel">
                 <div className="account-email-card">
                   <span>当前账号</span>
-                  <strong>{cloud.user.email}</strong>
+                  <strong>{cloud.user.name || cloud.user.login}</strong>
+                  <small>@{cloud.user.login}{cloud.user.email ? ` · ${cloud.user.email}` : ""}</small>
                 </div>
                 <section className="account-annotation-stats" aria-label="批注统计">
                   <div className="account-usage-heading">
@@ -326,62 +289,16 @@ export function AccountControls({
                 <small className="local-data-note">退出只清除本项目登录状态，本机高亮和批注会保留。</small>
               </div>
             ) : (
-              <>
-                <div className="account-tabs" role="tablist" aria-label="账号操作">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={panel === "login"}
-                    className={panel === "login" ? "active" : ""}
-                    onClick={() => { setPanel("login"); setMessage(""); setPassword(""); }}
-                  >
-                    登录
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={panel === "register"}
-                    className={panel === "register" ? "active" : ""}
-                    onClick={() => { setPanel("register"); setMessage(""); setPassword(""); }}
-                  >
-                    注册新账号
-                  </button>
-                </div>
-                <form className="account-form" onSubmit={submit}>
-                  <label>
-                    <span>邮箱</span>
-                    <input
-                      autoFocus
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      placeholder="name@example.com"
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>密码</span>
-                    <input
-                      type="password"
-                      autoComplete={panel === "register" ? "new-password" : "current-password"}
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      minLength={6}
-                      required
-                    />
-                  </label>
-                  <p className="password-privacy">密码只发送给当前项目的 Supabase Auth，本网页不会保存明文密码。</p>
-                  {message && (
-                    <p className={`account-message ${message.startsWith("注册成功") ? "success-message" : "error-message"}`}>
-                      {message}
-                    </p>
-                  )}
-                  <button type="submit" className="account-submit" disabled={busy || !email.trim() || password.length < 6}>
-                    {busy ? "请稍候…" : panel === "register" ? "注册" : "登录"}
-                  </button>
-                </form>
-              </>
+              <div className="github-login-panel">
+                <div className="github-login-mark" aria-hidden="true">GH</div>
+                <strong>使用 GitHub 登录</strong>
+                <p>登录后会把本机已有批注安全迁移到 Cloudflare D1，并启用免费增量同步。</p>
+                {message && <p className="account-message error-message">{message}</p>}
+                <button type="button" className="account-submit" onClick={handleSignIn}>
+                  继续使用 GitHub
+                </button>
+                <small className="local-data-note">无需绑定银行卡；退出登录不会删除本机批注。</small>
+              </div>
             )}
           </section>
         </div>,

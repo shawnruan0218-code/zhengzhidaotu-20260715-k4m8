@@ -42,6 +42,8 @@ export type StoredSyncState = {
   schemaVersion: 1;
   tombstones: Record<string, Tombstone>;
   lastSyncAt: string | null;
+  cloudCursor?: string | null;
+  syncedRecordVersions?: Record<string, string>;
 };
 
 export const EPOCH_TIMESTAMP = new Date(0).toISOString();

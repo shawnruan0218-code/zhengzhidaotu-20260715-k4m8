@@ -1,9 +1,8 @@
 export const APP_NAMESPACE = "zhengzhidaotu_20260715_k4m8";
 export const APP_SLUG = "zhengzhidaotu-20260715-k4m8";
-export const SUPABASE_PROJECT_NAME = APP_SLUG;
-export const SUPABASE_TABLE = `${APP_NAMESPACE}_items`;
-export const SUPABASE_USAGE_TABLE = `${APP_NAMESPACE}_ai_usage`;
 export const GITHUB_REPOSITORY = APP_SLUG;
+export const CLOUDFLARE_API_URL =
+  process.env.NEXT_PUBLIC_CLOUDFLARE_API_URL?.replace(/\/+$/, "") ?? "";
 
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
@@ -13,7 +12,7 @@ export const BASE_PATH = configuredBasePath
 
 export const STORAGE_KEYS = {
   library: `${APP_NAMESPACE}-library-v1`,
-  authSession: `${APP_NAMESPACE}-auth-session`,
+  cloudflareAuthSession: `${APP_NAMESPACE}-cloudflare-auth-session-v1`,
   settings: `${APP_NAMESPACE}-settings-v1`,
   syncState: `${APP_NAMESPACE}-sync-state-v1`,
 } as const;

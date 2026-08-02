@@ -2500,6 +2500,51 @@ kbd {
   margin-top: 18px;
 }
 
+.github-login-panel {
+  display: flex;
+  margin-top: 18px;
+  padding: 22px 18px 18px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  text-align: center;
+  background: rgba(118, 118, 128, 0.055);
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 16px;
+}
+
+.github-login-mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 2px;
+  place-items: center;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+  background: #1d1d1f;
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+}
+
+.github-login-panel > strong {
+  font-size: 15px;
+  letter-spacing: -0.02em;
+}
+
+.github-login-panel > p:not(.account-message) {
+  margin: 0 auto 3px;
+  max-width: 300px;
+  color: #636366;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.github-login-panel .local-data-note {
+  text-align: center;
+}
+
 .account-email-card {
   display: flex;
   padding: 13px 14px;

@@ -14,15 +14,19 @@
     "start": "vinext start",
     "test": "npm run test:sync && npm run build:pages",
     "test:sync": "node --experimental-strip-types --test tests/sync-core.test.mjs tests/project-isolation.test.mjs tests/knowledge-search.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern cloudflare",
+    "cf:dev": "wrangler dev --config cloudflare/wrangler.jsonc",
+    "cf:deploy": "wrangler deploy --config cloudflare/wrangler.jsonc",
+    "cf:migrate:local": "wrangler d1 migrations apply zhengzhidaotu-20260715-k4m8-db --local --config cloudflare/wrangler.jsonc",
+    "cf:migrate:remote": "wrangler d1 migrations apply zhengzhidaotu-20260715-k4m8-db --remote --config cloudflare/wrangler.jsonc"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.4",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
@@ -35,7 +39,8 @@
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
-    "vite": "8.0.13"
+    "vite": "8.0.13",
+    "wrangler": "^4.118.0"
   },
   "type": "module"
 }

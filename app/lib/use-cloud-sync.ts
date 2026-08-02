@@ -1,34 +1,34 @@
 "use client";
 
-import type { Session, User } from "@supabase/supabase-js";
 import {
   type Dispatch,
   type SetStateAction,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import {
   ITEM_KEY_PREFIX,
   STORAGE_KEYS,
-  SUPABASE_TABLE,
   VERSION_ID_PREFIX,
   scopedItemKey,
 } from "./app-config";
-import type {
-  StoredSyncState,
-  StudyVersion,
-  Tombstone,
-} from "./study-types";
+import {
+  clearCloudflareSession,
+  cloudflareLoginUrl,
+  cloudflareRequest,
+  consumeCloudflareCallback,
+  isCloudflareConfigured,
+  readCloudflareSession,
+  type CloudflareUser,
+} from "./cloudflare-client";
+import type { StoredSyncState, StudyVersion, Tombstone } from "./study-types";
 import { EPOCH_TIMESTAMP, nextIsoTimestamp } from "./study-types";
-import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client";
 import {
   chunkItems,
   chooseLatestRecord,
   mergeRecordSets,
-  readAllPages,
   reconcileVersionSnapshots,
   type SyncRecord,
 } from "./sync-core";
@@ -54,24 +54,32 @@ type SyncInputs = {
 export type CloudSyncController = {
   configured: boolean;
   authReady: boolean;
-  session: Session | null;
-  user: User | null;
+  user: CloudflareUser | null;
   status: SyncStatus;
   statusText: string;
   lastSyncAt: string | null;
   syncNow: () => Promise<void>;
-  signUp: (email: string, password: string) => Promise<"signed-in" | "verify-email">;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: () => void;
   signOut: () => Promise<void>;
   markVersionDeleted: (versionId: string) => void;
 };
 
-const PAGE_SIZE = 500;
-const UPSERT_BATCH_SIZE = 100;
-const TOMBSTONE_RETENTION_DAYS = 90;
+type PullResponse = {
+  records: SyncRecord[];
+  cursor: string | null;
+  hasMore: boolean;
+};
+
+const PUSH_BATCH_SIZE = 25;
 
 function emptySyncState(): StoredSyncState {
-  return { schemaVersion: 1, tombstones: {}, lastSyncAt: null };
+  return {
+    schemaVersion: 1,
+    tombstones: {},
+    lastSyncAt: null,
+    cloudCursor: null,
+    syncedRecordVersions: {},
+  };
 }
 
 function readSyncState(): StoredSyncState {
@@ -79,38 +87,58 @@ function readSyncState(): StoredSyncState {
     const raw = window.localStorage.getItem(STORAGE_KEYS.syncState);
     if (!raw) return emptySyncState();
     const parsed = JSON.parse(raw) as Partial<StoredSyncState>;
-    const tombstones =
-      parsed.tombstones && typeof parsed.tombstones === "object"
-        ? Object.fromEntries(
-            Object.entries(parsed.tombstones).filter(
-              (entry): entry is [string, Tombstone] =>
-                entry[0].startsWith(ITEM_KEY_PREFIX) &&
-                Boolean(entry[1]) &&
-                typeof entry[1].updatedAt === "string" &&
-                typeof entry[1].deletedAt === "string" &&
-                (entry[1].itemType === "study_version" ||
-                  entry[1].itemType === "active_version"),
-            ),
-          )
-        : {};
+    const tombstones = parsed.tombstones && typeof parsed.tombstones === "object"
+      ? Object.fromEntries(
+          Object.entries(parsed.tombstones).filter(
+            (entry): entry is [string, Tombstone] =>
+              entry[0].startsWith(ITEM_KEY_PREFIX) &&
+              Boolean(entry[1]) &&
+              typeof entry[1].updatedAt === "string" &&
+              typeof entry[1].deletedAt === "string" &&
+              (entry[1].itemType === "study_version" || entry[1].itemType === "active_version"),
+          ),
+        )
+      : {};
+    const syncedRecordVersions = parsed.syncedRecordVersions &&
+      typeof parsed.syncedRecordVersions === "object"
+      ? Object.fromEntries(
+          Object.entries(parsed.syncedRecordVersions).filter(
+            (entry): entry is [string, string] =>
+              entry[0].startsWith(ITEM_KEY_PREFIX) && typeof entry[1] === "string",
+          ),
+        )
+      : {};
     return {
       schemaVersion: 1,
       tombstones,
       lastSyncAt: typeof parsed.lastSyncAt === "string" ? parsed.lastSyncAt : null,
+      cloudCursor: typeof parsed.cloudCursor === "string" ? parsed.cloudCursor : null,
+      syncedRecordVersions,
     };
   } catch {
     return emptySyncState();
   }
 }
 
-function writeSyncState(tombstones: Record<string, Tombstone>, lastSyncAt: string | null) {
+function writeSyncState(
+  tombstones: Record<string, Tombstone>,
+  lastSyncAt: string | null,
+  cloudCursor: string | null,
+  syncedRecordVersions: Record<string, string>,
+) {
   try {
     window.localStorage.setItem(
       STORAGE_KEYS.syncState,
-      JSON.stringify({ schemaVersion: 1, tombstones, lastSyncAt } satisfies StoredSyncState),
+      JSON.stringify({
+        schemaVersion: 1,
+        tombstones,
+        lastSyncAt,
+        cloudCursor,
+        syncedRecordVersions,
+      } satisfies StoredSyncState),
     );
   } catch {
-    // The in-memory copy remains available if this browser blocks local storage.
+    // Local study data remains available even when browser storage is restricted.
   }
 }
 
@@ -128,11 +156,7 @@ function versionRecord(userId: string, version: StudyVersion): SyncRecord {
   };
 }
 
-function activeVersionRecord(
-  userId: string,
-  activeVersionId: string,
-  updatedAt: string,
-): SyncRecord {
+function activeVersionRecord(userId: string, activeVersionId: string, updatedAt: string): SyncRecord {
   const itemKey = scopedItemKey("setting:active-version");
   return {
     id: `${userId}::${itemKey}`,
@@ -172,9 +196,9 @@ function buildLocalRecords(
   ];
   const byKey = new Map(records.map((record) => [record.item_key, record]));
   for (const [itemKey, tombstone] of Object.entries(tombstones)) {
-    const deletedRecord = tombstoneRecord(userId, itemKey, tombstone);
-    const liveRecord = byKey.get(itemKey);
-    byKey.set(itemKey, liveRecord ? chooseLatestRecord(liveRecord, deletedRecord) : deletedRecord);
+    const deleted = tombstoneRecord(userId, itemKey, tombstone);
+    const live = byKey.get(itemKey);
+    byKey.set(itemKey, live ? chooseLatestRecord(live, deleted) : deleted);
   }
   return [...byKey.values()];
 }
@@ -182,27 +206,18 @@ function buildLocalRecords(
 function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: string): StudyVersion | null {
   if (typeof value.id !== "string" || typeof value.name !== "string") return null;
   if (!value.id.startsWith(VERSION_ID_PREFIX)) return null;
-  const notes =
-    value.notes && typeof value.notes === "object" && !Array.isArray(value.notes)
-      ? Object.fromEntries(
-          Object.entries(value.notes).filter(
-            (entry): entry is [string, string] => typeof entry[1] === "string",
-          ),
-        )
-      : {};
-  const noteCreatedAt =
-    value.noteCreatedAt &&
-    typeof value.noteCreatedAt === "object" &&
+  const notes = value.notes && typeof value.notes === "object" && !Array.isArray(value.notes)
+    ? Object.fromEntries(Object.entries(value.notes).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ))
+    : {};
+  const noteCreatedAt = value.noteCreatedAt && typeof value.noteCreatedAt === "object" &&
     !Array.isArray(value.noteCreatedAt)
-      ? Object.fromEntries(
-          Object.entries(value.noteCreatedAt).filter(
-            (entry): entry is [string, string] =>
-              Boolean(notes[entry[0]]) &&
-              typeof entry[1] === "string" &&
-              !Number.isNaN(Date.parse(entry[1])),
-          ),
-        )
-      : {};
+    ? Object.fromEntries(Object.entries(value.noteCreatedAt).filter(
+        (entry): entry is [string, string] =>
+          Boolean(notes[entry[0]]) && typeof entry[1] === "string" && !Number.isNaN(Date.parse(entry[1])),
+      ))
+    : {};
   return {
     id: value.id,
     name: value.name.trim() || "未命名版本",
@@ -225,21 +240,46 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
   };
 }
 
+function simpleHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function recordFingerprint(record: SyncRecord): string {
+  const payload = JSON.stringify({
+    type: record.item_type,
+    data: record.item_data,
+    updated: record.updated_at,
+    deleted: record.deleted_at,
+  });
+  return `${record.updated_at}:${record.deleted_at ?? ""}:${payload.length}:${simpleHash(payload)}`;
+}
+
+function rebindRecord(record: SyncRecord, userId: string): SyncRecord {
+  return { ...record, id: `${userId}::${record.item_key}`, user_id: userId };
+}
+
 function cloudErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   return "云端暂时不可用";
 }
 
 export function useCloudSync(inputs: SyncInputs): CloudSyncController {
-  const configured = isSupabaseConfigured();
-  const client = useMemo(() => getSupabaseClient(), []);
-  const [session, setSession] = useState<Session | null>(null);
+  const configured = isCloudflareConfigured();
+  const [user, setUser] = useState<CloudflareUser | null>(null);
   const [authReady, setAuthReady] = useState(!configured);
   const [status, setStatus] = useState<SyncStatus>(configured ? "local" : "unconfigured");
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const lastSyncAtRef = useRef<string | null>(null);
+  const latestInputs = useRef(inputs);
   const initialSyncState = useRef<StoredSyncState | null>(null);
   const tombstonesRef = useRef<Record<string, Tombstone>>({});
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
-  const latestInputs = useRef(inputs);
+  const cursorRef = useRef<string | null>(null);
+  const syncedVersionsRef = useRef<Record<string, string>>({});
   const runningSync = useRef<Promise<void> | null>(null);
   const syncQueued = useRef(false);
 
@@ -252,67 +292,71 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     const state = readSyncState();
     initialSyncState.current = state;
     tombstonesRef.current = state.tombstones;
+    cursorRef.current = state.cloudCursor ?? null;
+    syncedVersionsRef.current = state.syncedRecordVersions ?? {};
+    lastSyncAtRef.current = state.lastSyncAt;
     setLastSyncAt(state.lastSyncAt);
   }, [inputs.hydrated]);
 
   useEffect(() => {
-    if (!client) return;
+    if (!configured) return;
     let cancelled = false;
-    void client.auth.getSession().then(({ data, error }) => {
-      if (cancelled) return;
-      if (!error) setSession(data.session);
-      setAuthReady(true);
-    });
-    const { data } = client.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setAuthReady(true);
-      if (!nextSession) setStatus("local");
-    });
-    return () => {
-      cancelled = true;
-      data.subscription.unsubscribe();
-    };
-  }, [client]);
+    consumeCloudflareCallback();
+    if (!readCloudflareSession()) {
+      const timer = window.setTimeout(() => setAuthReady(true), 0);
+      return () => window.clearTimeout(timer);
+    }
+    void cloudflareRequest<{ user: CloudflareUser }>("/auth/me", { method: "GET" })
+      .then(({ user: nextUser }) => {
+        if (!cancelled) setUser(nextUser);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          clearCloudflareSession();
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuthReady(true);
+      });
+    return () => { cancelled = true; };
+  }, [configured]);
 
-  const fetchRemoteRecords = useCallback(
-    async (userId: string): Promise<SyncRecord[]> => {
-      if (!client) return [];
-      return readAllPages(async (from, to) => {
-        const { data, error } = await client
-          .from(SUPABASE_TABLE)
-          .select("id,user_id,item_key,item_type,item_data,added_at,updated_at,deleted_at")
-          .eq("user_id", userId)
-          .order("item_key", { ascending: true })
-          .range(from, to);
-        if (error) throw error;
-        return (data ?? []).filter(
-          (record): record is SyncRecord =>
-            record.user_id === userId && record.item_key.startsWith(ITEM_KEY_PREFIX),
-        );
-      }, PAGE_SIZE);
-    },
-    [client],
-  );
+  const pullRemote = useCallback(async (startCursor: string | null) => {
+    const records: SyncRecord[] = [];
+    let cursor = startCursor;
+    for (;;) {
+      const suffix = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+      const page = await cloudflareRequest<PullResponse>(`/sync/pull${suffix}`, { method: "GET" });
+      records.push(...page.records);
+      cursor = page.cursor ?? cursor;
+      if (!page.hasMore) return { records, cursor };
+    }
+  }, []);
 
-  const upsertRecords = useCallback(
-    async (records: SyncRecord[]) => {
-      if (!client) return;
-      for (const batch of chunkItems(records, UPSERT_BATCH_SIZE)) {
-        const { error } = await client
-          .from(SUPABASE_TABLE)
-          .upsert(batch, { onConflict: "user_id,item_key", ignoreDuplicates: false });
-        if (error) throw error;
-      }
-    },
-    [client],
-  );
+  const pushRemote = useCallback(async (records: SyncRecord[]) => {
+    for (const batch of chunkItems(records, PUSH_BATCH_SIZE)) {
+      await cloudflareRequest("/sync/push", {
+        method: "POST",
+        body: {
+          records: batch.map(({ item_key, item_type, item_data, added_at, updated_at, deleted_at }) => ({
+            item_key,
+            item_type,
+            item_data,
+            added_at,
+            updated_at,
+            deleted_at,
+          })),
+        },
+      });
+    }
+  }, []);
 
   const applyMergedRecords = useCallback((records: SyncRecord[]) => {
     const nextVersions: StudyVersion[] = [];
     const nextTombstones: Record<string, Tombstone> = {};
     const versionItemPrefix = scopedItemKey("version:");
     let activeRecord: SyncRecord | null = null;
-
     for (const record of records) {
       if (record.deleted_at) {
         nextTombstones[record.item_key] = {
@@ -320,130 +364,106 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
           updatedAt: record.updated_at,
           deletedAt: record.deleted_at,
         };
-        continue;
-      }
-      if (record.item_type === "study_version") {
+      } else if (record.item_type === "study_version") {
         const version = normalizeRemoteVersion(record.item_data, record.updated_at);
         if (version) nextVersions.push(version);
       } else if (record.item_type === "active_version") {
         activeRecord = record;
       }
     }
-
     if (!nextVersions.length) return;
-    nextVersions.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-    const requestedActiveId =
-      activeRecord && typeof activeRecord.item_data.activeVersionId === "string"
-        ? activeRecord.item_data.activeVersionId
-        : "";
-    const nextActiveId = nextVersions.some((version) => version.id === requestedActiveId)
-      ? requestedActiveId
-      : nextVersions[0].id;
-    const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
-
     const reconciledTombstones = { ...nextTombstones };
-    for (const [itemKey, localTombstone] of Object.entries(tombstonesRef.current)) {
-      const syncedTombstone = reconciledTombstones[itemKey];
-      if (
-        !syncedTombstone ||
-        Date.parse(localTombstone.updatedAt) > Date.parse(syncedTombstone.updatedAt)
-      ) {
-        reconciledTombstones[itemKey] = localTombstone;
+    for (const [itemKey, local] of Object.entries(tombstonesRef.current)) {
+      const remote = reconciledTombstones[itemKey];
+      if (!remote || Date.parse(local.updatedAt) > Date.parse(remote.updatedAt)) {
+        reconciledTombstones[itemKey] = local;
       }
     }
     const deletedVersionUpdates = Object.fromEntries(
       Object.entries(reconciledTombstones)
-        .filter(
-          ([itemKey, tombstone]) =>
-            tombstone.itemType === "study_version" &&
-            itemKey.startsWith(versionItemPrefix),
-        )
-        .map(([itemKey, tombstone]) => [
-          itemKey.slice(versionItemPrefix.length),
-          tombstone.updatedAt,
-        ]),
+        .filter(([key, tombstone]) =>
+          tombstone.itemType === "study_version" && key.startsWith(versionItemPrefix))
+        .map(([key, tombstone]) => [key.slice(versionItemPrefix.length), tombstone.updatedAt]),
     );
-
     tombstonesRef.current = reconciledTombstones;
     latestInputs.current.setVersions((current) => {
-      const reconciledVersions = reconcileVersionSnapshots(
-        current,
-        nextVersions,
-        deletedVersionUpdates,
-      );
-      return JSON.stringify(current) === JSON.stringify(reconciledVersions)
-        ? current
-        : reconciledVersions;
+      const reconciled = reconcileVersionSnapshots(current, nextVersions, deletedVersionUpdates);
+      return JSON.stringify(current) === JSON.stringify(reconciled) ? current : reconciled;
     });
-    latestInputs.current.setActiveVersionId((current) =>
-      current === nextActiveId ? current : nextActiveId,
-    );
+    const requestedActive = activeRecord && typeof activeRecord.item_data.activeVersionId === "string"
+      ? activeRecord.item_data.activeVersionId
+      : "";
+    const activeId = nextVersions.some((version) => version.id === requestedActive)
+      ? requestedActive
+      : nextVersions[0].id;
+    const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
+    latestInputs.current.setActiveVersionId((current) => current === activeId ? current : activeId);
     latestInputs.current.setActiveVersionUpdatedAt((current) =>
-      current === activeUpdatedAt ? current : activeUpdatedAt,
-    );
+      current === activeUpdatedAt ? current : activeUpdatedAt);
   }, []);
 
   const performSync = useCallback(async () => {
-    const userId = session?.user.id;
-    if (!client || !userId || !latestInputs.current.hydrated) return;
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
+    if (!user || !latestInputs.current.hydrated) return;
+    if (!navigator.onLine) {
       setStatus("offline");
       throw new Error("当前处于离线状态");
     }
-
     setStatus("syncing");
     try {
-      const firstLocal = buildLocalRecords(
-        userId,
+      const firstPull = await pullRemote(cursorRef.current);
+      firstPull.records.forEach((record) => {
+        syncedVersionsRef.current[record.item_key] = recordFingerprint(record);
+      });
+      const localRecords = buildLocalRecords(
+        user.id,
         latestInputs.current.versions,
         latestInputs.current.activeVersionId,
         latestInputs.current.activeVersionUpdatedAt,
         tombstonesRef.current,
       );
-      const firstRemote = await fetchRemoteRecords(userId);
-      const firstMerged = mergeRecordSets(firstLocal, firstRemote);
-      await upsertRecords(firstMerged);
+      const merged = mergeRecordSets(localRecords, firstPull.records)
+        .map((record) => rebindRecord(record, user.id));
+      applyMergedRecords(merged);
 
-      // A second read closes the race where another device writes during this sync.
-      const confirmedRemote = await fetchRemoteRecords(userId);
-      const latestLocal = buildLocalRecords(
-        userId,
-        latestInputs.current.versions,
-        latestInputs.current.activeVersionId,
-        latestInputs.current.activeVersionUpdatedAt,
-        tombstonesRef.current,
+      const pending = merged.filter(
+        (record) => syncedVersionsRef.current[record.item_key] !== recordFingerprint(record),
       );
-      const confirmedMerged = mergeRecordSets(latestLocal, confirmedRemote);
-      await upsertRecords(confirmedMerged);
-      applyMergedRecords(confirmedMerged);
+      if (pending.length) await pushRemote(pending);
 
+      const confirmed = await pullRemote(firstPull.cursor);
+      confirmed.records.forEach((record) => {
+        syncedVersionsRef.current[record.item_key] = recordFingerprint(record);
+      });
+      const finalMerged = mergeRecordSets(merged, confirmed.records.map((record) => rebindRecord(record, user.id)));
+      applyMergedRecords(finalMerged);
+      pending.forEach((record) => {
+        syncedVersionsRef.current[record.item_key] = recordFingerprint(record);
+      });
       const syncedAt = new Date().toISOString();
-      const cutoff = new Date(
-        Date.now() - TOMBSTONE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-      ).toISOString();
-      const { error: cleanupError } = await client
-        .from(SUPABASE_TABLE)
-        .delete()
-        .eq("user_id", userId)
-        .not("deleted_at", "is", null)
-        .lt("deleted_at", cutoff);
-      if (cleanupError) throw cleanupError;
-
-      tombstonesRef.current = Object.fromEntries(
-        Object.entries(tombstonesRef.current).filter(([, tombstone]) => tombstone.deletedAt >= cutoff),
-      );
+      cursorRef.current = confirmed.cursor;
+      lastSyncAtRef.current = syncedAt;
       setLastSyncAt(syncedAt);
-      writeSyncState(tombstonesRef.current, syncedAt);
+      writeSyncState(
+        tombstonesRef.current,
+        syncedAt,
+        cursorRef.current,
+        syncedVersionsRef.current,
+      );
       setStatus("synced");
     } catch (error) {
-      setStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error");
-      writeSyncState(tombstonesRef.current, lastSyncAt);
+      setStatus(navigator.onLine ? "error" : "offline");
+      writeSyncState(
+        tombstonesRef.current,
+        lastSyncAtRef.current,
+        cursorRef.current,
+        syncedVersionsRef.current,
+      );
       throw new Error(cloudErrorMessage(error));
     }
-  }, [applyMergedRecords, client, fetchRemoteRecords, lastSyncAt, session?.user.id, upsertRecords]);
+  }, [applyMergedRecords, pullRemote, pushRemote, user]);
 
   const syncNow = useCallback(async () => {
-    if (!client || !session?.user.id || !latestInputs.current.hydrated) return;
+    if (!user || !latestInputs.current.hydrated) return;
     if (runningSync.current) {
       syncQueued.current = true;
       return runningSync.current;
@@ -454,88 +474,61 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         await performSync();
       } while (syncQueued.current);
     };
-    runningSync.current = run().finally(() => {
-      runningSync.current = null;
-    });
+    runningSync.current = run().finally(() => { runningSync.current = null; });
     return runningSync.current;
-  }, [client, performSync, session?.user.id]);
+  }, [performSync, user]);
 
   useEffect(() => {
-    if (!inputs.hydrated) return;
-    if (session?.user.id) {
-      syncQueued.current = true;
+    if (!user || !inputs.hydrated) return;
+    const timer = window.setTimeout(() => {
+      setStatus("local");
       void syncNow().catch(() => undefined);
-    }
+    }, 1_500);
+    return () => window.clearTimeout(timer);
   }, [
     inputs.activeVersionId,
     inputs.activeVersionUpdatedAt,
     inputs.hydrated,
     inputs.versions,
-    session?.user.id,
     syncNow,
+    user,
   ]);
 
   useEffect(() => {
-    if (!session?.user.id || !inputs.hydrated) return;
+    if (!user || !inputs.hydrated) return;
     void syncNow().catch(() => undefined);
-    const interval = window.setInterval(() => void syncNow().catch(() => undefined), 30_000);
-    const resumeSync = () => void syncNow().catch(() => undefined);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") resumeSync();
+    const interval = window.setInterval(() => void syncNow().catch(() => undefined), 60_000);
+    const resume = () => void syncNow().catch(() => undefined);
+    const visibility = () => {
+      if (document.visibilityState === "visible") resume();
     };
-    window.addEventListener("online", resumeSync);
-    window.addEventListener("focus", resumeSync);
-    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", resume);
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", visibility);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("online", resumeSync);
-      window.removeEventListener("focus", resumeSync);
-      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", resume);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", visibility);
     };
-  }, [inputs.hydrated, session?.user.id, syncNow]);
+  }, [inputs.hydrated, syncNow, user]);
 
-  const signUp = useCallback(
-    async (email: string, password: string) => {
-      if (!client) throw new Error("尚未配置当前项目的 Supabase");
-      const redirectUrl = `${window.location.origin}${window.location.pathname}`;
-      const { data, error } = await client.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: redirectUrl },
-      });
-      if (error) throw error;
-      if (data.session) {
-        await syncNow();
-        return "signed-in" as const;
-      }
-      return "verify-email" as const;
-    },
-    [client, syncNow],
-  );
-
-  const signIn = useCallback(
-    async (email: string, password: string) => {
-      if (!client) throw new Error("尚未配置当前项目的 Supabase");
-      const { error } = await client.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      await syncNow();
-    },
-    [client, syncNow],
-  );
+  const signIn = useCallback(() => {
+    window.location.assign(cloudflareLoginUrl(window.location.href));
+  }, []);
 
   const signOut = useCallback(async () => {
-    if (!client) return;
-    const { error } = await client.auth.signOut({ scope: "local" });
-    if (error) throw error;
-    setSession(null);
+    if (readCloudflareSession()) {
+      await cloudflareRequest("/auth/logout", { method: "POST" }).catch(() => undefined);
+    }
+    clearCloudflareSession();
+    setUser(null);
     setStatus("local");
-  }, [client]);
+  }, []);
 
   const markVersionDeleted = useCallback((versionId: string) => {
-    const versionUpdatedAt = latestInputs.current.versions.find(
-      (version) => version.id === versionId,
-    )?.updatedAt;
-    const timestamp = nextIsoTimestamp(versionUpdatedAt);
+    const updatedAt = latestInputs.current.versions.find((version) => version.id === versionId)?.updatedAt;
+    const timestamp = nextIsoTimestamp(updatedAt);
     const itemKey = scopedItemKey(`version:${versionId}`);
     tombstonesRef.current = {
       ...tombstonesRef.current,
@@ -545,36 +538,38 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         deletedAt: timestamp,
       },
     };
-    writeSyncState(tombstonesRef.current, lastSyncAt);
+    writeSyncState(
+      tombstonesRef.current,
+      lastSyncAtRef.current,
+      cursorRef.current,
+      syncedVersionsRef.current,
+    );
     setStatus(configured ? "local" : "unconfigured");
     syncQueued.current = true;
-  }, [configured, lastSyncAt]);
+  }, [configured]);
 
-  const statusText =
-    status === "unconfigured"
-      ? "仅本地 · 待配置云端"
-      : status === "syncing"
-        ? "正在同步"
-        : status === "synced"
-          ? "云端已同步"
-          : status === "offline"
-            ? "离线 · 本地已保存"
-            : status === "error"
-              ? "本地已保存，云同步失败"
-              : session
-                ? "本地已保存"
-                : "本地已保存 · 未登录";
+  const statusText = status === "unconfigured"
+    ? "仅本地 · 待配置免费云端"
+    : status === "syncing"
+      ? "正在增量同步"
+      : status === "synced"
+        ? "云端已同步"
+        : status === "offline"
+          ? "离线 · 本地已保存"
+          : status === "error"
+            ? "本地已保存，云同步失败"
+            : user
+              ? "本地已保存"
+              : "本地已保存 · 未登录";
 
   return {
     configured,
     authReady,
-    session,
-    user: session?.user ?? null,
+    user,
     status,
     statusText,
     lastSyncAt,
     syncNow,
-    signUp,
     signIn,
     signOut,
     markVersionDeleted,

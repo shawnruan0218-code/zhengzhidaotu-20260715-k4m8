@@ -21,7 +21,7 @@ test("application never clears or reads generic browser storage", async () => {
   const files = await Promise.all([
     source("app/study-reader.tsx"),
     source("app/lib/use-cloud-sync.ts"),
-    source("app/lib/supabase-client.ts"),
+    source("app/lib/cloudflare-client.ts"),
   ]);
   const joined = files.join("\n");
   assert.doesNotMatch(joined, /localStorage\.clear\s*\(/);
@@ -30,7 +30,7 @@ test("application never clears or reads generic browser storage", async () => {
   for (const match of joined.matchAll(/localStorage\.(?:getItem|setItem|removeItem)\(([^,\n)]+)/g)) {
     assert.match(match[1], /STORAGE_KEYS\.|\bkey\b/);
   }
-  assert.match(joined, /key\.startsWith\(STORAGE_KEYS\.authSession\)/);
+  assert.match(joined, /localStorage\.removeItem\(STORAGE_KEYS\.cloudflareAuthSession\)/);
 });
 
 test("cache cleanup is limited to this project's cache prefix", async () => {
@@ -69,13 +69,13 @@ test("AI usage totals are account-scoped and browser clients cannot modify them"
   assert.match(sql, /grant execute on function[\s\S]*to service_role/i);
 });
 
-test("only the public Supabase browser variables are referenced", async () => {
+test("runtime configuration only exposes the public Cloudflare Worker URL", async () => {
   const [client, env, workflow] = await Promise.all([
-    source("app/lib/supabase-client.ts"),
+    source("app/lib/cloudflare-client.ts"),
     source(".env.example"),
     source(".github/workflows/deploy-pages.yml"),
   ]);
   const joined = `${client}\n${env}\n${workflow}`;
-  assert.match(joined, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
-  assert.doesNotMatch(joined, /service_role|SUPABASE_SECRET_KEY/i);
+  assert.match(joined, /NEXT_PUBLIC_CLOUDFLARE_API_URL/);
+  assert.doesNotMatch(joined, /NEXT_PUBLIC_SUPABASE|service_role|SUPABASE_SECRET_KEY/i);
 });

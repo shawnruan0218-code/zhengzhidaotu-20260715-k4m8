@@ -19,8 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NEXT_PUBLIC_BASE_PATH: /zhengzhidaotu-20260715-k4m8
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CLOUDFLARE_API_URL: https://zhengzhidaotu-20260715-k4m8-api.shawnruan0218.workers.dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4

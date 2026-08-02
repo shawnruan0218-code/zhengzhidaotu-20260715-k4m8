@@ -13,10 +13,10 @@
 - 全书文字词条索引；可粘贴题目、选项或知识点进行 AI 检索
 - 点击检索结果自动跳到图谱原位置，并用三秒渐变虚线框定位
 - 支持创建多个独立复习版本
-- Supabase 邮箱密码注册、登录、退出和 Session 自动恢复
+- GitHub 登录、退出和 90 天 Session 自动恢复
 - 本地优先保存；登录后自动跨设备合并与云同步
 - 断网不丢数据，恢复网络后重试；支持手动“立即同步”
-- 每个账号只能通过 RLS 访问自己的云端记录
+- 每个 GitHub 账号只能通过 Worker 访问自己的 D1 记录
 
 ## 本地运行
 
@@ -36,22 +36,22 @@ npm run test
 
 ## 云同步配置
 
-独立 Supabase 后端已经创建并部署：
+免费 Cloudflare 后端已创建并部署：
 
-- Project Ref：`womuvfxejdjwzcyjvclz`
-- Project URL：`https://womuvfxejdjwzcyjvclz.supabase.co`
-- 数据表：`public.zhengzhidaotu_20260715_k4m8_items`
-- 登录回调：当前 GitHub Pages 地址与 `http://localhost:3000`
+- Worker：`https://zhengzhidaotu-20260715-k4m8-api.shawnruan0218.workers.dev`
+- D1：`zhengzhidaotu-20260715-k4m8-db`
+- GitHub OAuth App：`zhengzhidaotu-20260715-k4m8`
+- 登录回调：Worker 的 `/auth/callback`
 
-数据库结构由 `supabase/migrations/20260716080611_zhengzhidaotu_20260715_k4m8_schema.sql` 管理，Auth 配置记录在 `supabase/config.toml`。本机公开配置保存在被 Git 忽略的 `.env.local`，GitHub Pages 使用仓库 Actions Secrets。前端只使用 Publishable Key；旧式 `anon/service_role` API Keys 已停用，服务器秘密密钥不会进入前端或仓库。
+数据库结构由 `cloudflare/migrations/0001_initial.sql` 管理，Worker 由 `cloudflare/src/index.ts` 实现。GitHub OAuth Client Secret 和硅基流动 API Key 只保存在 Cloudflare Worker Secrets，不会进入前端或仓库。
 
-配置与验收说明见 [docs/SUPABASE_GITHUB_SETUP_ZH.md](docs/SUPABASE_GITHUB_SETUP_ZH.md)。
+配置与验收说明见 [docs/CLOUDFLARE_GITHUB_SETUP_ZH.md](docs/CLOUDFLARE_GITHUB_SETUP_ZH.md)。
 
 ## AI 知识点检索
 
 `npm run build:knowledge-index` 会从 133 页 OCR 坐标生成
 `public/data/knowledge-index.json`。网页会同时召回整段语义和分行/表格中的
-独立知识点，再将最多 48 条候选交给项目专属的 Supabase Edge Function
+独立知识点，再将最多 48 条候选交给项目专属的 Cloudflare Worker
 `knowledge-search` 判断；模型最多返回 10 个去重后的知识区域，
 因此不会把整本图谱或 API Key 放进浏览器。
 
@@ -61,18 +61,15 @@ npm run test
 服务器配置命令如下（不要把真实 Key 写入仓库）：
 
 ```bash
-npx supabase secrets set \
-  SILICONFLOW_API_KEY=你的硅基流动APIKey \
-  SILICONFLOW_MODEL=Qwen/Qwen3.5-35B-A3B \
-  --project-ref womuvfxejdjwzcyjvclz
+npx wrangler secret put SILICONFLOW_API_KEY --config cloudflare/wrangler.jsonc
 ```
 
-Edge Function 通过登录用户的 Supabase Session 鉴权。本地召回只用于为模型
+Worker 通过登录用户的 GitHub Session 鉴权。本地召回只用于为模型
 筛选候选，不会显示给用户；未登录或模型服务不可用时，网页会直接给出提示。
 
 ## 数据与隔离说明
 
-所有本地存储、Supabase 表、云记录 ID、缓存和部署配置都使用唯一代号 `zhengzhidaotu_20260715_k4m8`。高亮和批注会先立即写入本机；登录后再异步合并到独立 Supabase Project。退出登录仅移除本项目 Session，本机复习数据仍会保留。
+所有本地存储、D1 表、云记录 ID、缓存和部署配置都使用唯一代号 `zhengzhidaotu_20260715_k4m8`。高亮和批注会先立即写入本机；登录后再异步增量合并到 D1。退出登录仅移除本项目 Session，本机复习数据仍会保留。运行时已完全不依赖 Supabase。
 
 ## GitHub Pages
 

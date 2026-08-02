@@ -10,7 +10,12 @@ import {
   shouldRetryKnowledgeRequest,
   waitForKnowledgeRetry,
 } from "./knowledge-request";
-import { getSupabaseClient } from "./supabase-client";
+import {
+  CloudflareHttpError,
+  cloudflareRequest,
+  isCloudflareConfigured,
+  readCloudflareSession,
+} from "./cloudflare-client";
 
 type FunctionResponse = {
   answer?: unknown;
@@ -120,45 +125,34 @@ export async function searchKnowledge(
     throw new Error("没有找到足够接近的图谱内容，请补充更完整的原文");
   }
 
-  const client = getSupabaseClient();
-  const session = client ? (await client.auth.getSession()).data.session : null;
-  if (!client || !session) throw new Error("请先登录账号后使用 AI 检索");
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if (!supabaseUrl || !publishableKey) {
+  if (!isCloudflareConfigured()) {
     throw new Error("AI 检索服务尚未配置");
   }
+  if (!readCloudflareSession()) throw new Error("请先使用 GitHub 登录后使用 AI 检索");
 
-  const endpoint = `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/knowledge-search`;
-  const requestBody = JSON.stringify({
-    query,
-    candidates: candidates.map(candidatePayload),
-  });
   let data: FunctionResponse = {};
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: publishableKey,
-        "Content-Type": "application/json",
-      },
-      body: requestBody,
-      signal,
-    });
-    data = (await response.json().catch(() => ({}))) as FunctionResponse;
-    if (response.ok) break;
-    if (attempt === 0 && shouldRetryKnowledgeRequest(response.status)) {
-      await waitForKnowledgeRetry(650, signal);
-      continue;
+    try {
+      data = await cloudflareRequest<FunctionResponse>("/knowledge-search", {
+        method: "POST",
+        body: { query, candidates: candidates.map(candidatePayload) },
+        signal,
+      });
+      break;
+    } catch (error) {
+      if (
+        error instanceof CloudflareHttpError &&
+        attempt === 0 &&
+        shouldRetryKnowledgeRequest(error.status)
+      ) {
+        await waitForKnowledgeRetry(650, signal);
+        continue;
+      }
+      if (error instanceof CloudflareHttpError) {
+        throw new Error(knowledgeHttpErrorMessage(error.status, error.message));
+      }
+      throw error;
     }
-    throw new Error(
-      knowledgeHttpErrorMessage(
-        response.status,
-        typeof data.error === "string" ? data.error : undefined,
-      ),
-    );
   }
 
   const answer = normalizeFunctionAnswer(data, candidates);
