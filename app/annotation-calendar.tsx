@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { AnnotationRecord } from "./lib/study-types";
+import { HighlightedNoteText } from "./note-highlight-text";
 
 type Props = {
   active?: boolean;
@@ -186,7 +187,11 @@ export function AnnotationCalendar({
             current === record.id ? null : current,
           )
         }
-        onClick={() => onJump(record)}
+        onClick={() => {
+          const selection = window.getSelection();
+          if (selection && !selection.isCollapsed) return;
+          onJump(record);
+        }}
       >
         {record.id === lastVisitedRecordId && (
           <span className="annotation-record-last-visited">上次看到这里</span>
@@ -195,7 +200,16 @@ export function AnnotationCalendar({
           <strong>{record.entryText}</strong>
           <i>第 {record.page} 页 ›</i>
         </span>
-        {noteVisible && <p>{record.note}</p>}
+        {noteVisible && (
+          <p>
+            <HighlightedNoteText
+              text={record.note}
+              ranges={record.noteHighlights}
+              entryId={record.entryId}
+              versionId={record.versionId}
+            />
+          </p>
+        )}
         <small>
           {record.versionName}
           {record.createdAt &&

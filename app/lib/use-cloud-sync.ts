@@ -23,7 +23,7 @@ import {
   readCloudflareSession,
   type CloudflareUser,
 } from "./cloudflare-client";
-import type { StoredSyncState, StudyVersion, Tombstone } from "./study-types";
+import type { NoteHighlightRange, StoredSyncState, StudyVersion, Tombstone } from "./study-types";
 import { EPOCH_TIMESTAMP, nextIsoTimestamp } from "./study-types";
 import {
   chunkItems,
@@ -218,6 +218,23 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
           Boolean(notes[entry[0]]) && typeof entry[1] === "string" && !Number.isNaN(Date.parse(entry[1])),
       ))
     : {};
+  const noteHighlights = value.noteHighlights && typeof value.noteHighlights === "object" &&
+    !Array.isArray(value.noteHighlights)
+    ? Object.fromEntries(Object.entries(value.noteHighlights).flatMap(([entryId, ranges]) => {
+        if (!Array.isArray(ranges)) return [];
+        const normalized = ranges.flatMap((range) => {
+          if (!range || typeof range !== "object") return [];
+          const item = range as Partial<NoteHighlightRange>;
+          return typeof item.start === "number" &&
+            typeof item.end === "number" &&
+            typeof item.quote === "string" &&
+            item.end > item.start
+            ? [{ start: item.start, end: item.end, quote: item.quote }]
+            : [];
+        });
+        return normalized.length ? [[entryId, normalized]] : [];
+      }))
+    : {};
   return {
     id: value.id,
     name: value.name.trim() || "未命名版本",
@@ -227,6 +244,7 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
       ? value.highlights.filter((id): id is string => typeof id === "string")
       : [],
     notes,
+    noteHighlights,
     noteCreatedAt,
     highlightHistory: Array.isArray(value.highlightHistory)
       ? value.highlightHistory

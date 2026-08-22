@@ -18,14 +18,29 @@ import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
 import {
+  outlinePathForLocation,
+  type OutlineNode,
+} from "./lib/outline-navigation";
+import {
+  attachLegacySummaryIds,
+  buildLegacySummaryGroups,
+  buildSummaryGroups,
+} from "./lib/summary-entry-groups";
+import {
   EPOCH_TIMESTAMP,
   nextIsoTimestamp,
   type AnnotationRecord,
+  type NoteHighlightRange,
   type StoredLibrary,
   type StoredSettings,
   type StudyVersion,
 } from "./lib/study-types";
 import { useCloudSync } from "./lib/use-cloud-sync";
+import {
+  HighlightedNoteText,
+  readSelectedNoteText,
+  type SelectedNoteText,
+} from "./note-highlight-text";
 import pageManifest from "./page-manifest.json";
 import detectedSummaryRegions from "./summary-regions.json";
 import outlineData from "./outline.json";
@@ -76,6 +91,7 @@ type EntryBlock = {
   segments: EntrySegment[];
   lineIndexes: number[];
   isSummary: boolean;
+  legacyIds?: string[];
 };
 
 type SummaryRegion = {
@@ -109,14 +125,6 @@ type PageMetadata = {
   height: number;
 };
 
-type OutlineNode = {
-  id: string;
-  title: string;
-  page: number;
-  y: number;
-  children?: OutlineNode[];
-};
-
 const PAGES = (pageManifest as PageMetadata[]).map((page) => ({
   ...page,
   src: withBasePath(page.src),
@@ -148,6 +156,11 @@ function entryPageFromId(entryId: string) {
   if (!match) return 0;
   const page = Number(match[1]);
   return Number.isInteger(page) ? page : 0;
+}
+
+function outlineContains(node: OutlineNode, id: string | null): boolean {
+  if (!id) return false;
+  return node.id === id || (node.children ?? []).some((child) => outlineContains(child, id));
 }
 
 function knowledgeFocusRect(entry: KnowledgeEntry): LocatorRect {
@@ -190,6 +203,28 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
           ),
         )
       : {};
+  const noteHighlights =
+    candidate.noteHighlights &&
+    typeof candidate.noteHighlights === "object" &&
+    !Array.isArray(candidate.noteHighlights)
+      ? Object.fromEntries(
+          Object.entries(candidate.noteHighlights).flatMap(([entryId, ranges]) => {
+            if (!Array.isArray(ranges)) return [];
+            const normalized = ranges.flatMap((range) => {
+              if (!range || typeof range !== "object") return [];
+              const item = range as Partial<NoteHighlightRange>;
+              if (
+                typeof item.start !== "number" ||
+                typeof item.end !== "number" ||
+                typeof item.quote !== "string" ||
+                item.end <= item.start
+              ) return [];
+              return [{ start: item.start, end: item.end, quote: item.quote }];
+            });
+            return normalized.length ? [[entryId, normalized]] : [];
+          }),
+        )
+      : {};
 
   return {
     id: candidate.id,
@@ -203,6 +238,7 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
       ? candidate.highlights.filter((id): id is string => typeof id === "string")
       : [],
     notes,
+    noteHighlights,
     noteCreatedAt,
     highlightHistory: Array.isArray(candidate.highlightHistory)
       ? candidate.highlightHistory
@@ -253,6 +289,7 @@ function buildEntryBlocks(
   page: OCRPage,
   pageNumber: number,
   shouldInclude: (line: OCRLine, lineIndex: number) => boolean = () => true,
+  joinWrappedNodes = true,
 ): EntryBlock[] {
   const candidates = page.lines
     .map((line, lineIndex) => ({ ...line, lineIndex, text: line.text.trim() }))
@@ -299,26 +336,28 @@ function buildEntryBlocks(
   const startsAnotherMarker = (text: string) =>
     /^\s*(?:\d{1,2}[.、．]|[（(]\d+[）)]|[①②③④⑤⑥⑦⑧⑨⑩]|考点\s*\d*\s*[：:])/.test(text);
 
-  candidates.forEach((heading, headingIndex) => {
-    if (!startsStructuralParent(heading.text) || heading.width > 0.18) return;
-    let groupBottom = heading.y + heading.height;
+  if (joinWrappedNodes) {
+    candidates.forEach((heading, headingIndex) => {
+      if (!startsStructuralParent(heading.text) || heading.width > 0.18) return;
+      let groupBottom = heading.y + heading.height;
 
-    for (let continuationIndex = 0; continuationIndex < 2; continuationIndex += 1) {
-      const continuation = candidates
-        .map((line, index) => ({ line, index }))
-        .filter(({ index }) => find(index) !== find(headingIndex))
-        .filter(({ line }) => !startsAnotherMarker(line.text))
-        .filter(({ line }) => Math.abs(line.x - heading.x) <= 0.018)
-        .filter(({ line }) => line.width <= 0.18)
-        .filter(({ line }) => line.y + line.height / 2 > groupBottom - heading.height / 2)
-        .filter(({ line }) => line.y - groupBottom >= -0.006 && line.y - groupBottom <= 0.012)
-        .sort((left, right) => left.line.y - right.line.y)[0];
+      for (let continuationIndex = 0; continuationIndex < 2; continuationIndex += 1) {
+        const continuation = candidates
+          .map((line, index) => ({ line, index }))
+          .filter(({ index }) => find(index) !== find(headingIndex))
+          .filter(({ line }) => !startsAnotherMarker(line.text))
+          .filter(({ line }) => Math.abs(line.x - heading.x) <= 0.018)
+          .filter(({ line }) => line.width <= 0.18)
+          .filter(({ line }) => line.y + line.height / 2 > groupBottom - heading.height / 2)
+          .filter(({ line }) => line.y - groupBottom >= -0.006 && line.y - groupBottom <= 0.012)
+          .sort((left, right) => left.line.y - right.line.y)[0];
 
-      if (!continuation) break;
-      union(headingIndex, continuation.index);
-      groupBottom = Math.max(groupBottom, continuation.line.y + continuation.line.height);
-    }
-  });
+        if (!continuation) break;
+        union(headingIndex, continuation.index);
+        groupBottom = Math.max(groupBottom, continuation.line.y + continuation.line.height);
+      }
+    });
+  }
 
   const groups = new Map<number, number[]>();
   candidates.forEach((_, index) => {
@@ -328,33 +367,35 @@ function buildEntryBlocks(
 
   // A “考点” heading and its tightly attached subtitle are one logical parent node.
   // Some pages use a parenthesised subtitle, while others print a short title below it.
-  for (const [root, indexes] of Array.from(groups.entries())) {
-    const lines = indexes.map((index) => candidates[index]);
-    const heading = lines.find((line) => /考点\s*\d*\s*[：:]/.test(line.text));
-    if (!heading) continue;
-    const headingTail = heading.text.split(/[：:]/).slice(1).join("").trim();
-    let groupBottom = Math.max(...lines.map((line) => line.y + line.height));
-    let lastCenterY = Math.max(...lines.map((line) => line.y + line.height / 2));
-    const maximumSubtitleLines = headingTail ? 1 : 3;
+  if (joinWrappedNodes) {
+    for (const [root, indexes] of Array.from(groups.entries())) {
+      const lines = indexes.map((index) => candidates[index]);
+      const heading = lines.find((line) => /考点\s*\d*\s*[：:]/.test(line.text));
+      if (!heading) continue;
+      const headingTail = heading.text.split(/[：:]/).slice(1).join("").trim();
+      let groupBottom = Math.max(...lines.map((line) => line.y + line.height));
+      let lastCenterY = Math.max(...lines.map((line) => line.y + line.height / 2));
+      const maximumSubtitleLines = headingTail ? 1 : 3;
 
-    for (let subtitleIndex = 0; subtitleIndex < maximumSubtitleLines; subtitleIndex += 1) {
-      const subtitle = candidates
-        .map((line, index) => ({ line, index }))
-        .filter(({ index }) => find(index) !== find(root))
-        .filter(({ line }) =>
-          headingTail
-            ? /^[（(]/.test(line.text)
-            : line.text.replace(/\s+/g, "").length <= 18,
-        )
-        .filter(({ line }) => line.y + line.height / 2 > lastCenterY + 0.004)
-        .filter(({ line }) => line.y - groupBottom <= 0.009)
-        .filter(({ line }) => Math.abs(line.x - heading.x) <= 0.04)
-        .sort((left, right) => left.line.y - right.line.y)[0];
+      for (let subtitleIndex = 0; subtitleIndex < maximumSubtitleLines; subtitleIndex += 1) {
+        const subtitle = candidates
+          .map((line, index) => ({ line, index }))
+          .filter(({ index }) => find(index) !== find(root))
+          .filter(({ line }) =>
+            headingTail
+              ? /^[（(]/.test(line.text)
+              : line.text.replace(/\s+/g, "").length <= 18,
+          )
+          .filter(({ line }) => line.y + line.height / 2 > lastCenterY + 0.004)
+          .filter(({ line }) => line.y - groupBottom <= 0.009)
+          .filter(({ line }) => Math.abs(line.x - heading.x) <= 0.04)
+          .sort((left, right) => left.line.y - right.line.y)[0];
 
-      if (!subtitle) break;
-      union(root, subtitle.index);
-      groupBottom = Math.max(groupBottom, subtitle.line.y + subtitle.line.height);
-      lastCenterY = subtitle.line.y + subtitle.line.height / 2;
+        if (!subtitle) break;
+        union(root, subtitle.index);
+        groupBottom = Math.max(groupBottom, subtitle.line.y + subtitle.line.height);
+        lastCenterY = subtitle.line.y + subtitle.line.height / 2;
+      }
     }
   }
 
@@ -415,11 +456,10 @@ function combineSummaryBlocks(
   region: SummaryRegion,
   itemIndex: number,
 ): EntryBlock {
-  const ordered = [...blocks].sort((left, right) => {
-    const centerDelta = left.y + left.height / 2 - (right.y + right.height / 2);
-    const rowTolerance = Math.max(left.height, right.height) * 0.65;
-    return Math.abs(centerDelta) <= rowTolerance ? left.x - right.x : left.y - right.y;
-  });
+  // Same-baseline colour fragments have already been joined by
+  // buildEntryBlocks. A strict vertical order here avoids a non-transitive
+  // comparator accidentally moving a continuation above its numbered item.
+  const ordered = [...blocks].sort((left, right) => left.y - right.y || left.x - right.x);
   const left = Math.min(...blocks.map((block) => block.x));
   const top = Math.min(...blocks.map((block) => block.y));
   const right = Math.max(...blocks.map((block) => block.x + block.width));
@@ -444,7 +484,7 @@ function combineSummaryBlocks(
 
 function buildSummaryEntries(page: OCRPage, pageNumber: number): EntryBlock[] {
   return (SUMMARY_REGIONS[pageNumber] ?? []).flatMap((region) => {
-    const regionBlocks = buildEntryBlocks(
+    const legacyRegionBlocks = buildEntryBlocks(
       page,
       pageNumber,
       (line) => isInsideRegion(line, region),
@@ -453,38 +493,91 @@ function buildSummaryEntries(page: OCRPage, pageNumber: number): EntryBlock[] {
       const rowTolerance = Math.max(left.height, right.height) * 0.65;
       return Math.abs(centerDelta) <= rowTolerance ? left.x - right.x : left.y - right.y;
     });
-    const itemGroups: EntryBlock[][] = [];
-    let currentGroup: EntryBlock[] | null = null;
-
-    regionBlocks.forEach((block) => {
-      const normalizedText = block.text.replace(/\s+/g, "");
-      const headingOnly = /^[！!「]?\s*(?:总结|易错点)(?:（[^）]*）)?[：:]?\s*$/.test(
-        normalizedText,
-      );
-      if (headingOnly) {
-        currentGroup = null;
-        return;
-      }
-
-      const startsNumberedItem = /^[！!「]?\s*(?:\d{1,2}[.、．]|\d{1,2}(?=[\u4e00-\u9fff])|[①②③④⑤⑥⑦⑧⑨⑩]|[（(]\d+[）)])/.test(
-        normalizedText,
-      );
-      const currentBottom = currentGroup
-        ? Math.max(...currentGroup.map((entry) => entry.y + entry.height))
-        : -1;
-
-      if (startsNumberedItem || !currentGroup || block.y - currentBottom > 0.028) {
-        currentGroup = [block];
-        itemGroups.push(currentGroup);
-      } else {
-        currentGroup.push(block);
-      }
-    });
-
-    return itemGroups.map((blocks, itemIndex) =>
+    const orderedRegionBlocks = buildEntryBlocks(
+      page,
+      pageNumber,
+      (line) => isInsideRegion(line, region),
+      false,
+    ).sort((left, right) => left.y - right.y || left.x - right.x);
+    const legacyEntries = buildLegacySummaryGroups(legacyRegionBlocks).map((blocks, itemIndex) =>
       combineSummaryBlocks(blocks, pageNumber, region, itemIndex + 1),
     );
+    const entries = buildSummaryGroups(orderedRegionBlocks).map((blocks, itemIndex) =>
+      combineSummaryBlocks(blocks, pageNumber, region, itemIndex + 1),
+    );
+    return attachLegacySummaryIds(entries, legacyEntries);
   });
+}
+
+function entryStorageIds(entry: EntryBlock) {
+  return [entry.id, ...(entry.legacyIds ?? [])];
+}
+
+function entryHasNote(entry: EntryBlock, notes: Record<string, string>) {
+  return entryStorageIds(entry).some((id) => Boolean(notes[id]));
+}
+
+function entryNoteId(entry: EntryBlock, notes: Record<string, string>) {
+  return entryStorageIds(entry).find((id) => Boolean(notes[id])) ?? entry.id;
+}
+
+function entryIsEmphasized(entry: EntryBlock, emphasizedIds: Set<string>) {
+  return entryStorageIds(entry).some((id) => emphasizedIds.has(id));
+}
+
+function entryHotspotRect(entry: EntryBlock, pageEntries: EntryBlock[]) {
+  if (!entry.isSummary || !entry.segments.length) {
+    return {
+      x: Math.max(0, entry.x - 0.0018),
+      y: Math.max(0, entry.y - 0.0015),
+      width: Math.min(1 - entry.x, entry.width + 0.0036),
+      height: entry.height + 0.003,
+    };
+  }
+
+  const centers = entry.segments.map((segment) => segment.y + segment.height / 2);
+  const firstCenter = Math.min(...centers);
+  const lastCenter = Math.max(...centers);
+  const summaryRegionKey = (candidate: EntryBlock) =>
+    candidate.id.replace(/-item-\d+-l[\d-]+$/, "");
+  const regionKey = summaryRegionKey(entry);
+  const horizontallyOverlaps = (candidate: EntryBlock) =>
+    Math.min(entry.x + entry.width, candidate.x + candidate.width) -
+      Math.max(entry.x, candidate.x) > 0.01;
+  const peers = pageEntries
+    .filter((candidate) => candidate.isSummary && candidate.id !== entry.id)
+    .filter((candidate) => summaryRegionKey(candidate) === regionKey)
+    .filter(horizontallyOverlaps)
+    .map((candidate) => {
+      const candidateCenters = candidate.segments.map(
+        (segment) => segment.y + segment.height / 2,
+      );
+      return {
+        first: Math.min(...candidateCenters),
+        last: Math.max(...candidateCenters),
+      };
+    });
+  const previousCenter = Math.max(
+    -Infinity,
+    ...peers.filter((peer) => peer.last < firstCenter).map((peer) => peer.last),
+  );
+  const nextCenter = Math.min(
+    Infinity,
+    ...peers.filter((peer) => peer.first > lastCenter).map((peer) => peer.first),
+  );
+  const top = Number.isFinite(previousCenter)
+    ? (previousCenter + firstCenter) / 2
+    : Math.max(0, entry.y - 0.0005);
+  const bottom = Number.isFinite(nextCenter)
+    ? (lastCenter + nextCenter) / 2
+    : Math.min(1, entry.y + entry.height + 0.0005);
+
+  return {
+    x: Math.max(0, entry.x - 0.001),
+    y: top,
+    width: Math.min(1 - entry.x, entry.width + 0.002),
+    height: Math.max(0.003, bottom - top),
+  };
 }
 
 function entryMarkerDepth(text: string) {
@@ -723,11 +816,26 @@ export function StudyReader() {
   } | null>(null);
   const [expandedOutlineRoots, setExpandedOutlineRoots] = useState<Set<string>>(() => new Set());
   const [expandedOutlineSections, setExpandedOutlineSections] = useState<Set<string>>(() => new Set());
+  const [currentOutlineNodeId, setCurrentOutlineNodeId] = useState<string | null>(null);
   const [panKeyHeld, setPanKeyHeld] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [hoveredEntryId, setHoveredEntryId] = useState<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [floatingNoteEntryId, setFloatingNoteEntryId] = useState<string | null>(null);
+  const [noteFontScale, setNoteFontScale] = useState(1.2);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEYS.noteDisplay) ?? "null") as
+        | { fontScale?: unknown }
+        | null;
+      if (typeof saved?.fontScale !== "number") return;
+      const savedScale = Math.min(1.7, Math.max(0.9, saved.fontScale));
+      queueMicrotask(() => setNoteFontScale(savedScale));
+    } catch {
+      // Display preference is optional and never affects stored study data.
+    }
+  }, []);
   const [noteDraft, setNoteDraft] = useState("");
   const [toast, setToast] = useState("");
   const viewerRef = useRef<HTMLElement | null>(null);
@@ -784,6 +892,7 @@ export function StudyReader() {
   const activeVersion = versions.find((version) => version.id === activeVersionId) ?? null;
   const highlights = activeVersion?.highlights ?? [];
   const notes = activeVersion?.notes ?? {};
+  const noteHighlights = activeVersion?.noteHighlights ?? {};
   const highlightHistory = activeVersion?.highlightHistory ?? [];
   const emphasizedEntries = activeVersion?.emphasizedEntries ?? [];
 
@@ -896,6 +1005,7 @@ export function StudyReader() {
           updatedAt: INITIAL_UPDATED_AT,
           highlights: [],
           notes: {},
+          noteHighlights: {},
           noteCreatedAt: {},
           highlightHistory: [],
           emphasizedEntries: [],
@@ -940,6 +1050,17 @@ export function StudyReader() {
       // Versions still work for the current session if local storage is unavailable.
     }
   }, [activeVersionId, activeVersionUpdatedAt, versions, versionsHydrated]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEYS.noteDisplay,
+        JSON.stringify({ fontScale: noteFontScale }),
+      );
+    } catch {
+      // Keep the current-session preference when storage is unavailable.
+    }
+  }, [noteFontScale]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -1074,6 +1195,7 @@ export function StudyReader() {
       updatedAt: timestamp,
       highlights: [],
       notes: {},
+      noteHighlights: {},
       noteCreatedAt: {},
       highlightHistory: [],
       emphasizedEntries: [],
@@ -1126,7 +1248,13 @@ export function StudyReader() {
     [entryPages],
   );
   const entriesById = useMemo(
-    () => new Map(entryPages.flat().map((entry) => [entry.id, entry])),
+    () => {
+      const entries = new Map<string, EntryBlock>();
+      entryPages.flat().forEach((entry) => {
+        entryStorageIds(entry).forEach((id) => entries.set(id, entry));
+      });
+      return entries;
+    },
     [entryPages],
   );
   const emphasizedEntrySet = useMemo(
@@ -1155,13 +1283,18 @@ export function StudyReader() {
 
   const toggleEntryEmphasis = useCallback(
     (entryId: string) => {
-      const isEmphasized = emphasizedEntries.includes(entryId);
+      const entry = entriesById.get(entryId);
+      if (!entry) return;
+      const storageIds = new Set(entryStorageIds(entry));
+      const isEmphasized = entryIsEmphasized(entry, emphasizedEntrySet);
       setEmphasizedEntries((current) =>
-        isEmphasized ? current.filter((id) => id !== entryId) : [...current, entryId],
+        isEmphasized
+          ? current.filter((id) => !storageIds.has(id))
+          : [...current.filter((id) => !storageIds.has(id)), entry.id],
       );
       showToast(isEmphasized ? "已撤回整条划线和高亮" : "已整条划线并高亮");
     },
-    [emphasizedEntries, setEmphasizedEntries, showToast],
+    [emphasizedEntrySet, entriesById, setEmphasizedEntries, showToast],
   );
 
   const queueClipboardWrite = useCallback(
@@ -1230,8 +1363,9 @@ export function StudyReader() {
   const openAnnotation = useCallback(
     (entry: EntryBlock) => {
       setFloatingNoteEntryId(null);
-      setActiveEntryId(entry.id);
-      setNoteDraft(notes[entry.id] ?? "");
+      const noteId = entryNoteId(entry, notes);
+      setActiveEntryId(noteId);
+      setNoteDraft(notes[noteId] ?? "");
     },
     [notes],
   );
@@ -1256,7 +1390,7 @@ export function StudyReader() {
       };
     });
     closeAnnotation();
-    showToast("批注已保存，条目下方已加下划线");
+    showToast("批注已保存");
   }, [activeEntryId, closeAnnotation, noteDraft, showToast, updateActiveVersion]);
 
   const deleteAnnotation = useCallback(() => {
@@ -1264,18 +1398,59 @@ export function StudyReader() {
     updateActiveVersion((version) => {
       const nextNotes = { ...version.notes };
       const nextNoteCreatedAt = { ...version.noteCreatedAt };
+      const nextNoteHighlights = { ...version.noteHighlights };
       delete nextNotes[activeEntryId];
       delete nextNoteCreatedAt[activeEntryId];
+      delete nextNoteHighlights[activeEntryId];
       return {
         ...version,
         notes: nextNotes,
         noteCreatedAt: nextNoteCreatedAt,
+        noteHighlights: nextNoteHighlights,
       };
     });
     setFloatingNoteEntryId(null);
     closeAnnotation();
     showToast("批注已删除");
   }, [activeEntryId, closeAnnotation, showToast, updateActiveVersion]);
+
+  const addNoteTextHighlight = useCallback(
+    (selection: SelectedNoteText) => {
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
+            return version;
+          }
+          const existing = version.noteHighlights[selection.entryId] ?? [];
+          if (
+            existing.some(
+              (range) => range.start === selection.start && range.end === selection.end,
+            )
+          ) {
+            return version;
+          }
+          return {
+            ...version,
+            noteHighlights: {
+              ...version.noteHighlights,
+              [selection.entryId]: [
+                ...existing,
+                {
+                  start: selection.start,
+                  end: selection.end,
+                  quote: selection.quote,
+                },
+              ],
+            },
+            updatedAt: nextIsoTimestamp(version.updatedAt),
+          };
+        }),
+      );
+      window.getSelection()?.removeAllRanges();
+      showToast("已高亮批注中的选中文字");
+    },
+    [showToast],
+  );
 
   const goToPage = useCallback(
     (requestedPage: number, behavior: ScrollBehavior = "smooth") => {
@@ -1344,12 +1519,13 @@ export function StudyReader() {
   );
 
   const jumpToAnnotation = useCallback(
-    (record: AnnotationRecord) => {
+    (record: AnnotationRecord, options?: { showNote?: boolean }) => {
       if (record.versionId !== activeVersionId) selectVersion(record.versionId);
       setFocusOnly(false);
       setSummaryOnly(false);
       setShowSummaries(true);
       setInteractionMode("entry");
+      if (options?.showNote) setFloatingNoteEntryId(record.entryId);
       loadOcrPage(record.page);
       goToPage(record.page, "auto");
 
@@ -1415,13 +1591,47 @@ export function StudyReader() {
   }, [currentPage]);
 
   const openOutline = useCallback(() => {
+    const viewer = viewerRef.current;
+    const sheet = pageRefs.current[currentPage]?.querySelector<HTMLElement>(".page-sheet");
+    const viewerRect = viewer?.getBoundingClientRect();
+    const sheetRect = sheet?.getBoundingClientRect();
+    const currentY =
+      viewerRect && sheetRect && sheetRect.height
+        ? Math.min(1, Math.max(0, (viewerRect.top + viewerRect.height * 0.46 - sheetRect.top) / sheetRect.height))
+        : 0;
+    const currentPath = outlinePathForLocation(OUTLINE, currentPage, currentY);
+    const rootId = currentPath[0]?.id ?? activeOutlineRoot?.id;
+    const sectionId = currentPath[1]?.id;
+    const currentId = currentPath.at(-1)?.id ?? rootId ?? null;
+    setCurrentOutlineNodeId(currentId);
     setExpandedOutlineRoots((existing) => {
       const next = new Set(existing);
-      if (activeOutlineRoot) next.add(activeOutlineRoot.id);
+      if (rootId) next.add(rootId);
       return next;
     });
+    if (sectionId) {
+      setExpandedOutlineSections((existing) => new Set(existing).add(sectionId));
+    }
     setOutlineOpen(true);
-  }, [activeOutlineRoot]);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const tree = document.querySelector<HTMLElement>(".outline-tree");
+        const row = currentId
+          ? document.querySelector<HTMLElement>(`.outline-row[data-outline-id="${currentId}"]`)
+          : null;
+        if (!tree || !row) return;
+        const treeRect = tree.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        tree.scrollTo({
+          top: Math.max(
+            0,
+            tree.scrollTop + rowRect.top - treeRect.top - tree.clientHeight / 2 + rowRect.height / 2,
+          ),
+          behavior: "smooth",
+        });
+      });
+    });
+  }, [activeOutlineRoot, currentPage]);
 
   const toggleOutlineGroup = useCallback(
     (id: string, level: 1 | 2) => {
@@ -1790,6 +2000,21 @@ export function StudyReader() {
         if (!isOutsideEntryNotePreview) return;
       }
 
+      if (
+        !isTyping &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "d"
+      ) {
+        const selectedNote = readSelectedNoteText();
+        if (selectedNote) {
+          event.preventDefault();
+          addNoteTextHighlight(selectedNote);
+          return;
+        }
+      }
+
       if (event.key === "Escape" && outlineOpen) {
         event.preventDefault();
         setOutlineOpen(false);
@@ -1893,7 +2118,10 @@ export function StudyReader() {
         const targetedEntryId = targetedHotspot?.dataset.entryId ?? hoveredEntryId;
         if (targetedEntryId) {
           event.preventDefault();
-          if (notes[targetedEntryId]) setFloatingNoteEntryId(targetedEntryId);
+          const targetedEntry = entriesById.get(targetedEntryId);
+          if (targetedEntry && entryHasNote(targetedEntry, notes)) {
+            setFloatingNoteEntryId(entryNoteId(targetedEntry, notes));
+          }
           return;
         }
       }
@@ -2011,6 +2239,7 @@ export function StudyReader() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     activeEntryId,
+    addNoteTextHighlight,
     addSelectionHighlight,
     annotationHistoryOpen,
     closeAnnotation,
@@ -2069,7 +2298,7 @@ export function StudyReader() {
         const targetEntries = entries.filter((entry) => {
           if (entry.isSummary) return false;
           if (interactionMode === "entry") {
-            return Boolean(notes[entry.id]) || emphasizedEntrySet.has(entry.id);
+            return entryHasNote(entry, notes) || entryIsEmphasized(entry, emphasizedEntrySet);
           }
           return entry.lineIndexes.some((lineIndex) =>
             focusHighlightLineSet.has(`p${pageNumber}-l${lineIndex}`),
@@ -2155,7 +2384,7 @@ export function StudyReader() {
   const isolationActive = focusOnly || summaryOnly;
   const displayedPages = mode === "page" ? [PAGES[currentPage - 1]] : PAGES;
   const currentPageNoteCount = (entryPages[currentPage - 1] ?? []).filter((entry) =>
-    Boolean(notes[entry.id]),
+    entryHasNote(entry, notes),
   ).length;
 
   const changeInteractionMode = (nextMode: InteractionMode) => {
@@ -2288,6 +2517,9 @@ export function StudyReader() {
               page,
               entryText: entry?.text.trim() || `第 ${page} 页批注条目`,
               note,
+              noteHighlights: version.noteHighlights[entryId] ?? [],
+              entryY: entry?.y ?? 0,
+              outlinePath: outlinePathForLocation(OUTLINE, page, entry?.y ?? 0),
               createdAt: version.noteCreatedAt[entryId] ?? null,
             } satisfies AnnotationRecord];
           }),
@@ -2606,10 +2838,12 @@ export function StudyReader() {
             <nav className="outline-tree" aria-label="按章节与考点跳转">
               {OUTLINE.map((root) => {
                 const rootExpanded = expandedOutlineRoots.has(root.id);
-                const rootActive = root.id === activeOutlineRoot?.id;
+                const rootActive = currentOutlineNodeId
+                  ? outlineContains(root, currentOutlineNodeId)
+                  : root.id === activeOutlineRoot?.id;
                 return (
                   <div className="outline-root" key={root.id}>
-                    <div className={`outline-row outline-level-1 ${rootActive ? "current" : ""}`}>
+                    <div data-outline-id={root.id} className={`outline-row outline-level-1 ${rootActive || root.id === currentOutlineNodeId ? "current" : ""}`}>
                       <button
                         type="button"
                         className="outline-disclosure"
@@ -2631,7 +2865,7 @@ export function StudyReader() {
                           const hasPoints = Boolean(section.children?.length);
                           return (
                             <div className="outline-section" key={section.id}>
-                              <div className="outline-row outline-level-2">
+                              <div data-outline-id={section.id} className={`outline-row outline-level-2 ${outlineContains(section, currentOutlineNodeId) ? "current" : ""}`}>
                                 <button
                                   type="button"
                                   className={`outline-disclosure ${hasPoints ? "" : "is-empty"}`}
@@ -2656,6 +2890,7 @@ export function StudyReader() {
                                     <button
                                       type="button"
                                       className="outline-row outline-level-3"
+                                      data-outline-id={point.id}
                                       key={point.id}
                                       onClick={() => jumpToOutlineNode(point)}
                                     >
@@ -2697,6 +2932,10 @@ export function StudyReader() {
         records={annotationRecords}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
+        onHighlightNote={addNoteTextHighlight}
+        noteFontScale={noteFontScale}
+        onNoteFontScaleChange={setNoteFontScale}
+        outline={OUTLINE}
       />
 
       <section
@@ -2751,7 +2990,10 @@ export function StudyReader() {
                   ]
               : [];
             const pageFloatingEntry = floatingNoteEntryId
-              ? pageEntries.find((entry) => entry.id === floatingNoteEntryId)
+              ? pageEntries.find((entry) => entryStorageIds(entry).includes(floatingNoteEntryId))
+              : null;
+            const pageFloatingNoteId = pageFloatingEntry
+              ? entryNoteId(pageFloatingEntry, notes)
               : null;
             const isRenderedPage =
               mode === "page" || Math.abs(page.number - currentPage) <= 2;
@@ -2901,7 +3143,7 @@ export function StudyReader() {
                           top: `${Math.max(0, glyph.y - 0.0007) * 100}%`,
                           width: `${(glyph.width + 0.0012) * 100}%`,
                           height: `${(glyph.height + 0.0014) * 100}%`,
-                        }}
+                        } as CSSProperties}
                       />
                     ))}
                   </div>
@@ -2922,24 +3164,6 @@ export function StudyReader() {
                     </div>
                   )}
 
-                  <div className="entry-underlines" aria-hidden="true">
-                    {pageEntries.flatMap((entry) =>
-                      (notes[entry.id] || emphasizedEntrySet.has(entry.id)) &&
-                      visibleEntryIds.has(entry.id)
-                        ? entry.segments.map((segment, segmentIndex) => (
-                            <span
-                              key={`${entry.id}-underline-${segmentIndex}`}
-                              style={{
-                                left: `${segment.x * 100}%`,
-                                top: `${(segment.y + segment.height + 0.001) * 100}%`,
-                                width: `${segment.width * 100}%`,
-                              }}
-                            />
-                          ))
-                        : [],
-                    )}
-                  </div>
-
                   {isInteractivePage && ocr && (
                     <SelectableTextLayer
                       pageNumber={page.number}
@@ -2955,8 +3179,9 @@ export function StudyReader() {
                   {isInteractivePage && interactionMode === "entry" && (
                     <div className="entry-layer" aria-label={`第 ${page.number} 页整体条目层`}>
                       {pageEntries.filter((entry) => visibleEntryIds.has(entry.id)).map((entry) => {
-                        const hasNote = Boolean(notes[entry.id]);
-                        const isEmphasized = emphasizedEntrySet.has(entry.id);
+                        const hasNote = entryHasNote(entry, notes);
+                        const isEmphasized = entryIsEmphasized(entry, emphasizedEntrySet);
+                        const hotspotRect = entryHotspotRect(entry, pageEntries);
                         return (
                           <button
                             type="button"
@@ -2966,10 +3191,10 @@ export function StudyReader() {
                             title={`${hasNote ? "点击查看批注；" : "按 Q 添加批注；"}${isEmphasized ? "按 E 撤回整条划线；" : "按 E 整条划线；"}按 W 开始新复制组；按 1 追加当前条目`}
                             key={entry.id}
                             style={{
-                              left: `${Math.max(0, entry.x - 0.0018) * 100}%`,
-                              top: `${Math.max(0, entry.y - 0.0015) * 100}%`,
-                              width: `${Math.min(1 - entry.x, entry.width + 0.0036) * 100}%`,
-                              height: `${(entry.height + 0.003) * 100}%`,
+                              left: `${hotspotRect.x * 100}%`,
+                              top: `${hotspotRect.y * 100}%`,
+                              width: `${hotspotRect.width * 100}%`,
+                              height: `${hotspotRect.height * 100}%`,
                             }}
                             onMouseEnter={() => setHoveredEntryId(entry.id)}
                             onMouseLeave={() =>
@@ -2995,13 +3220,19 @@ export function StudyReader() {
                   {isInteractivePage &&
                     interactionMode === "entry" &&
                     pageFloatingEntry &&
-                    notes[pageFloatingEntry.id] &&
+                    pageFloatingNoteId &&
+                    notes[pageFloatingNoteId] &&
                     visibleEntryIds.has(pageFloatingEntry.id) && (
                       <aside
                         className={`floating-note ${pageFloatingEntry.x > 0.66 ? "align-right" : ""} ${pageFloatingEntry.y > 0.72 ? "opens-upward" : ""}`}
                         role="note"
                         aria-label="条目批注预览"
                         style={{
+                          "--floating-note-width": `${Math.min(
+                            760,
+                            Math.max(340, 300 + Math.sqrt(notes[pageFloatingNoteId].length) * 28),
+                          )}px`,
+                          "--note-font-scale": noteFontScale,
                           left: `${
                             (pageFloatingEntry.x > 0.66
                               ? Math.min(0.97, pageFloatingEntry.x + pageFloatingEntry.width)
@@ -3012,7 +3243,7 @@ export function StudyReader() {
                               ? pageFloatingEntry.y - 0.008
                               : pageFloatingEntry.y + pageFloatingEntry.height + 0.009) * 100
                           }%`,
-                        }}
+                        } as CSSProperties}
                       >
                         <header>
                           <strong>批注</strong>
@@ -3024,7 +3255,14 @@ export function StudyReader() {
                             ×
                           </button>
                         </header>
-                        <p>{notes[pageFloatingEntry.id]}</p>
+                        <p>
+                          <HighlightedNoteText
+                            text={notes[pageFloatingNoteId]}
+                            ranges={noteHighlights[pageFloatingNoteId]}
+                            entryId={pageFloatingNoteId}
+                            versionId={activeVersionId}
+                          />
+                        </p>
                       </aside>
                     )}
                 </div>
@@ -3188,7 +3426,7 @@ export function StudyReader() {
               />
             </label>
             <footer className="annotation-actions">
-              {notes[activeEntry.id] && (
+              {activeEntryId && notes[activeEntryId] && (
                 <button type="button" className="delete-note" onClick={deleteAnnotation}>
                   删除批注
                 </button>

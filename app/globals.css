@@ -1142,7 +1142,6 @@ kbd {
 .persistent-highlights,
 .selection-preview,
 .text-layer,
-.entry-underlines,
 .entry-layer {
   position: absolute;
   inset: 0;
@@ -1158,21 +1157,6 @@ kbd {
   z-index: 3;
   pointer-events: none;
   mix-blend-mode: multiply;
-}
-
-.entry-underlines {
-  z-index: 3;
-  pointer-events: none;
-}
-
-.entry-underlines span {
-  position: absolute;
-  display: block;
-  min-width: 5px;
-  height: 2px;
-  background: var(--apple-blue);
-  border-radius: 999px;
-  box-shadow: 0 0.5px 1px rgba(0, 82, 172, 0.24);
 }
 
 .persistent-highlights span {
@@ -1252,10 +1236,12 @@ kbd {
 .floating-note {
   position: absolute;
   z-index: 7;
-  width: clamp(180px, 26%, 330px);
-  max-height: 220px;
-  padding: 11px 12px 12px;
-  overflow: auto;
+  width: min(var(--floating-note-width, 440px), calc(100vw - 32px));
+  max-width: min(760px, calc(100vw - 32px));
+  height: auto;
+  max-height: none;
+  padding: 13px 15px 15px;
+  overflow: visible;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(0, 122, 255, 0.2);
@@ -2182,7 +2168,7 @@ kbd {
 
 .floating-note strong {
   color: var(--apple-blue);
-  font-size: 11px;
+  font-size: calc(12px * var(--note-font-scale, 1));
   font-weight: 680;
   letter-spacing: 0.02em;
 }
@@ -2206,10 +2192,24 @@ kbd {
   margin: 0;
   overflow-wrap: anywhere;
   color: #3a3a3c;
-  font-size: 12px;
+  font-size: calc(14px * var(--note-font-scale, 1));
   font-weight: 450;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.note-highlight-text {
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.note-highlight-text mark {
+  color: inherit;
+  background: rgba(255, 214, 10, 0.58);
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 @keyframes floating-note-in {
@@ -3468,9 +3468,310 @@ kbd {
 }
 
 .annotation-history-content .annotation-record p {
-  font-size: 12px;
+  display: block;
+  overflow: visible;
+  font-size: calc(12px * var(--note-font-scale, 1));
   line-height: 1.6;
-  -webkit-line-clamp: 6;
+  white-space: pre-wrap;
+  -webkit-line-clamp: unset;
+}
+
+.annotation-history-tools {
+  display: flex;
+  padding: 12px 2px 4px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.annotation-history-modes {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  background: rgba(118, 118, 128, 0.09);
+  border-radius: 12px;
+}
+
+.annotation-history-modes button,
+.annotation-note-font-controls button {
+  height: 32px;
+  padding: 0 12px;
+  color: #636366;
+  font-size: 11px;
+  font-weight: 680;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-history-modes button.is-active {
+  color: #7e339f;
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(35, 25, 39, 0.1);
+}
+
+.annotation-note-font-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #8e8e93;
+  font-size: 10px;
+}
+
+.annotation-note-font-controls button {
+  min-width: 38px;
+  padding: 0 8px;
+  color: #7e339f;
+  background: rgba(175, 82, 222, 0.08);
+}
+
+.annotation-note-font-controls output {
+  min-width: 38px;
+  color: #515154;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.annotation-history-content.is-chapter,
+.annotation-history-content.is-quick {
+  padding: 16px 2px 2px;
+}
+
+.annotation-chapter-reader {
+  display: grid;
+  min-height: 100%;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.18fr);
+  gap: 20px;
+}
+
+.annotation-chapter-tree,
+.annotation-chapter-records {
+  min-height: 0;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 16px;
+}
+
+.annotation-chapter-tree {
+  overflow: auto;
+}
+
+.annotation-chapter-tree > header,
+.annotation-chapter-records > header {
+  display: flex;
+  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.annotation-chapter-tree > header span {
+  color: #8e8e93;
+  font-size: 9px;
+}
+
+.annotation-chapter-node > button {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  margin: 2px 0;
+  padding: 7px 9px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  color: #3a3a3c;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-chapter-node > button:hover,
+.annotation-chapter-node > button.is-active {
+  color: #71308f;
+  background: rgba(175, 82, 222, 0.1);
+}
+
+.annotation-chapter-node > button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.annotation-chapter-node > button span {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-chapter-node > button strong {
+  flex: 0 0 auto;
+  color: #8b3bb0;
+  font-size: 9px;
+}
+
+.annotation-chapter-node.level-2 { padding-left: 13px; }
+.annotation-chapter-node.level-3 { padding-left: 26px; }
+
+.annotation-chapter-records {
+  overflow: auto;
+}
+
+.annotation-chapter-records > header button {
+  height: 32px;
+  padding: 0 11px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  background: #9540b7;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-reading-card {
+  margin-bottom: 10px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 14px;
+}
+
+.annotation-reading-card.is-last-visited {
+  border-color: rgba(154, 68, 191, 0.65);
+  box-shadow: 0 0 0 3px rgba(175, 82, 222, 0.11);
+}
+
+.annotation-reading-card > button,
+.annotation-quick-source button {
+  display: flex;
+  width: 100%;
+  padding: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.annotation-reading-card > button span,
+.annotation-quick-source button {
+  flex: 0 0 auto;
+  color: #8b3bb0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.annotation-reading-card p,
+.annotation-quick-note {
+  margin: 10px 0;
+  color: #3a3a3c;
+  font-size: calc(14px * var(--note-font-scale, 1));
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.annotation-reading-card small {
+  color: #8e8e93;
+  font-size: 9px;
+}
+
+.annotation-quick-review {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(175, 82, 222, 0.14);
+  border-radius: 18px;
+}
+
+.annotation-quick-review > header,
+.annotation-quick-review > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.annotation-quick-review > header span {
+  color: #7e339f;
+  font-size: 13px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+
+.annotation-quick-review > header small {
+  color: #8e8e93;
+}
+
+.annotation-quick-source {
+  margin-top: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(60, 60, 67, 0.1);
+}
+
+.annotation-quick-source > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.annotation-quick-source button {
+  width: auto;
+}
+
+.annotation-quick-review > footer button {
+  min-width: 112px;
+  height: 38px;
+  color: #71308f;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(175, 82, 222, 0.09);
+  border: 1px solid rgba(175, 82, 222, 0.14);
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.annotation-quick-review > footer button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.annotation-history-sheet.is-mini .annotation-history-tools {
+  padding: 8px 10px 0;
+  flex-wrap: wrap;
+}
+
+.annotation-history-sheet.is-mini .annotation-history-modes button {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+
+.annotation-history-sheet.is-mini .annotation-note-font-controls > span {
+  display: none;
+}
+
+.annotation-history-sheet.is-mini .annotation-history-content.is-quick,
+.annotation-history-sheet.is-mini .annotation-history-content.is-chapter {
+  padding: 10px;
+}
+
+.annotation-history-sheet.is-mini .annotation-quick-review {
+  padding: 14px;
+}
+
+.annotation-history-sheet.is-mini .annotation-quick-note {
+  font-size: calc(13px * var(--note-font-scale, 1));
 }
 
 .annotation-history-content .annotation-record small {
@@ -3970,6 +4271,40 @@ kbd {
 
   .annotation-history-content {
     overflow-y: auto;
+  }
+
+  .annotation-history-tools {
+    padding-top: 10px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .annotation-history-modes {
+    width: 100%;
+  }
+
+  .annotation-history-modes button {
+    min-width: 0;
+    flex: 1;
+    padding-inline: 7px;
+  }
+
+  .annotation-note-font-controls {
+    justify-content: flex-end;
+  }
+
+  .annotation-chapter-reader {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .annotation-chapter-tree {
+    max-height: 42vh;
+    flex: 0 0 auto;
+  }
+
+  .annotation-chapter-records {
+    overflow: visible;
   }
 
   .annotation-history-content .annotation-calendar {
