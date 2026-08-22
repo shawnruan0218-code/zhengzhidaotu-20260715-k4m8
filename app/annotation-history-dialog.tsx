@@ -22,6 +22,13 @@ import {
 
 type HistoryView = "calendar" | "chapter" | "quick";
 
+export type MiniReviewBounds = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
 type Props = {
   open: boolean;
   records: AnnotationRecord[];
@@ -31,6 +38,8 @@ type Props = {
   onClose: () => void;
   onJump: (record: AnnotationRecord, options?: { showNote?: boolean }) => void;
   onHighlightNote: (selection: SelectedNoteText) => void;
+  onRemoveNoteHighlight: (selection: SelectedNoteText) => void;
+  onMiniBoundsChange: (bounds: MiniReviewBounds | null) => void;
 };
 
 function localDayKey(value: string) {
@@ -59,6 +68,8 @@ export function AnnotationHistoryDialog({
   onClose,
   onJump,
   onHighlightNote,
+  onRemoveNoteHighlight,
+  onMiniBoundsChange,
 }: Props) {
   const [showReturnToTop, setShowReturnToTop] = useState(false);
   const [lastVisitedRecordId, setLastVisitedRecordId] = useState<string | null>(null);
@@ -100,6 +111,34 @@ export function AnnotationHistoryDialog({
 
   useEffect(() => { quickIndexRef.current = quickIndex; }, [quickIndex]);
 
+  useEffect(() => {
+    if (!open || !miniMode || !sheetRef.current) {
+      onMiniBoundsChange(null);
+      return;
+    }
+    const sheet = sheetRef.current;
+    const publishBounds = () => {
+      const rect = sheet.getBoundingClientRect();
+      onMiniBoundsChange({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+    };
+    const frame = requestAnimationFrame(publishBounds);
+    const observer = new ResizeObserver(publishBounds);
+    observer.observe(sheet);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [miniMode, onMiniBoundsChange, open]);
+
+  useEffect(() => {
+    if (!open || !miniMode) return;
+    const frame = requestAnimationFrame(() => {
+      const rect = sheetRef.current?.getBoundingClientRect();
+      if (rect) onMiniBoundsChange({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [miniMode, miniPosition, onMiniBoundsChange, open]);
+
   const resetSheetDimensions = () => {
     sheetRef.current?.style.removeProperty("width");
     sheetRef.current?.style.removeProperty("height");
@@ -119,7 +158,9 @@ export function AnnotationHistoryDialog({
     const width = Math.min(compact ? 430 : 520, Math.max(300, window.innerWidth - 24));
     const height = Math.min(compact ? 500 : 640, Math.max(300, window.innerHeight - 24));
     setMiniPosition({
-      left: Math.max(12, Math.round((window.innerWidth - width) / 2)),
+      left: compact
+        ? Math.max(12, Math.round(window.innerWidth - width - 12))
+        : Math.max(12, Math.round((window.innerWidth - width) / 2)),
       top: Math.max(12, Math.round((window.innerHeight - height) / 2)),
     });
     requestAnimationFrame(() => {
@@ -158,12 +199,14 @@ export function AnnotationHistoryDialog({
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select") || target?.isContentEditable) return;
 
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "d") {
+      const selectionKey = event.key.toLowerCase();
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && (selectionKey === "d" || selectionKey === "f")) {
         const selection = readSelectedNoteText();
         if (selection) {
           event.preventDefault();
           event.stopPropagation();
-          onHighlightNote(selection);
+          if (selectionKey === "d") onHighlightNote(selection);
+          else onRemoveNoteHighlight(selection);
         }
         return;
       }
@@ -176,7 +219,7 @@ export function AnnotationHistoryDialog({
     };
     window.addEventListener("keydown", handleReviewKeys, true);
     return () => window.removeEventListener("keydown", handleReviewKeys, true);
-  }, [goToQuickIndex, onHighlightNote, open, view]);
+  }, [goToQuickIndex, onHighlightNote, onRemoveNoteHighlight, open, view]);
 
   const handleMiniPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (!miniMode || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
@@ -251,7 +294,7 @@ export function AnnotationHistoryDialog({
           </header>
         ) : (
           <header className="annotation-history-header">
-            <div className="annotation-history-heading"><span>批注历史 · 多模式复习</span><h2 id="annotation-history-title">我的批注</h2><p>按日期或章节阅读；快速复习中按 A / S 切换，划选批注文字后按 D 高亮。</p></div>
+            <div className="annotation-history-heading"><span>批注历史 · 多模式复习</span><h2 id="annotation-history-title">我的批注</h2><p>快速复习按 A / S 切换；划选批注文字后按 D 高亮、按 F 取消高亮。</p></div>
             <div className="annotation-history-summary" aria-label="批注历史统计">
               <div><strong>{records.length.toLocaleString("zh-CN")}</strong><span>条批注</span></div>
               <div><strong>{datedDayCount.toLocaleString("zh-CN")}</strong><span>个记录日</span></div>

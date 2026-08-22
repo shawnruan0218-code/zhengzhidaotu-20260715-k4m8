@@ -15,7 +15,7 @@ export const STORAGE_KEYS = {
   cloudflareAuthSession: `${APP_NAMESPACE}-cloudflare-auth-session-v1`,
   settings: `${APP_NAMESPACE}-settings-v1`,
   syncState: `${APP_NAMESPACE}-sync-state-v1`,
-  noteDisplay: `${APP_NAMESPACE}-note-display-v1`,
+  noteDisplay: `${APP_NAMESPACE}-note-display-v2`,
 } as const;
 
 export const CACHE_NAME = `${APP_NAMESPACE}-cache-v1`;

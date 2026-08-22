@@ -1,6 +1,7 @@
 "use client";
 
 import type { NoteHighlightRange } from "./lib/study-types";
+import { resolveNoteHighlightRanges } from "./lib/note-highlights";
 
 type Props = {
   text: string;
@@ -18,20 +19,8 @@ export type SelectedNoteText = {
   quote: string;
 };
 
-function resolvedRanges(text: string, ranges: NoteHighlightRange[]) {
-  return ranges
-    .flatMap((range) => {
-      let start = Math.max(0, Math.min(text.length, Math.floor(range.start)));
-      let end = Math.max(start, Math.min(text.length, Math.floor(range.end)));
-      if (range.quote && text.slice(start, end) !== range.quote) {
-        const relocated = text.indexOf(range.quote);
-        if (relocated >= 0) {
-          start = relocated;
-          end = relocated + range.quote.length;
-        }
-      }
-      return end > start ? [{ start, end }] : [];
-    })
+function mergedRanges(text: string, ranges: NoteHighlightRange[]) {
+  return resolveNoteHighlightRanges(text, ranges)
     .sort((left, right) => left.start - right.start || left.end - right.end)
     .reduce<Array<{ start: number; end: number }>>((merged, range) => {
       const previous = merged.at(-1);
@@ -51,7 +40,7 @@ export function HighlightedNoteText({
   versionId,
   className,
 }: Props) {
-  const resolved = resolvedRanges(text, ranges);
+  const resolved = mergedRanges(text, ranges);
   const pieces: React.ReactNode[] = [];
   let cursor = 0;
   resolved.forEach((range, index) => {

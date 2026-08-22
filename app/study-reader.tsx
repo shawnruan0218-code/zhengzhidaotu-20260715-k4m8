@@ -12,11 +12,15 @@ import {
   useState,
 } from "react";
 import { AccountControls } from "./account-controls";
-import { AnnotationHistoryDialog } from "./annotation-history-dialog";
+import {
+  AnnotationHistoryDialog,
+  type MiniReviewBounds,
+} from "./annotation-history-dialog";
 import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
+import { removeNoteHighlightSelection } from "./lib/note-highlights";
 import {
   outlinePathForLocation,
   type OutlineNode,
@@ -806,6 +810,8 @@ export function StudyReader() {
   const [knowledgeSearchOpen, setKnowledgeSearchOpen] = useState(false);
   const [batchKnowledgeSearchOpen, setBatchKnowledgeSearchOpen] = useState(false);
   const [annotationHistoryOpen, setAnnotationHistoryOpen] = useState(false);
+  const [annotationHistoryMiniBounds, setAnnotationHistoryMiniBounds] =
+    useState<MiniReviewBounds | null>(null);
   const [knowledgeLocator, setKnowledgeLocator] = useState<
     (KnowledgeEntry & { animationId: number }) | null
   >(null);
@@ -822,7 +828,7 @@ export function StudyReader() {
   const [hoveredEntryId, setHoveredEntryId] = useState<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [floatingNoteEntryId, setFloatingNoteEntryId] = useState<string | null>(null);
-  const [noteFontScale, setNoteFontScale] = useState(1.2);
+  const [noteFontScale, setNoteFontScale] = useState(0.9);
 
   useEffect(() => {
     try {
@@ -1452,6 +1458,43 @@ export function StudyReader() {
     [showToast],
   );
 
+  const removeSelectedNoteTextHighlight = useCallback(
+    (selection: SelectedNoteText) => {
+      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const preview = selectedVersion?.notes[selection.entryId]
+        ? removeNoteHighlightSelection(
+            selectedVersion.notes[selection.entryId],
+            selectedVersion.noteHighlights[selection.entryId] ?? [],
+            selection,
+          )
+        : null;
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
+            return version;
+          }
+          const result = removeNoteHighlightSelection(
+            version.notes[selection.entryId],
+            version.noteHighlights[selection.entryId] ?? [],
+            selection,
+          );
+          if (!result.changed) return version;
+          const nextNoteHighlights = { ...version.noteHighlights };
+          if (result.ranges.length) nextNoteHighlights[selection.entryId] = result.ranges;
+          else delete nextNoteHighlights[selection.entryId];
+          return {
+            ...version,
+            noteHighlights: nextNoteHighlights,
+            updatedAt: nextIsoTimestamp(version.updatedAt),
+          };
+        }),
+      );
+      window.getSelection()?.removeAllRanges();
+      showToast(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
+    },
+    [showToast, versions],
+  );
+
   const goToPage = useCallback(
     (requestedPage: number, behavior: ScrollBehavior = "smooth") => {
       const page = clampPage(requestedPage);
@@ -2005,12 +2048,13 @@ export function StudyReader() {
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
-        event.key.toLowerCase() === "d"
+        (event.key.toLowerCase() === "d" || event.key.toLowerCase() === "f")
       ) {
         const selectedNote = readSelectedNoteText();
         if (selectedNote) {
           event.preventDefault();
-          addNoteTextHighlight(selectedNote);
+          if (event.key.toLowerCase() === "d") addNoteTextHighlight(selectedNote);
+          else removeSelectedNoteTextHighlight(selectedNote);
           return;
         }
       }
@@ -2256,6 +2300,7 @@ export function StudyReader() {
     notes,
     openAnnotation,
     outlineOpen,
+    removeSelectedNoteTextHighlight,
     startEntryCopyGroup,
     toggleEntryEmphasis,
     toggleZoomMode,
@@ -2528,6 +2573,38 @@ export function StudyReader() {
           (right.createdAt ?? "").localeCompare(left.createdAt ?? ""),
         ),
     [entriesById, versions],
+  );
+
+  const floatingNoteEntry = floatingNoteEntryId
+    ? entriesById.get(floatingNoteEntryId) ?? null
+    : null;
+  const floatingNoteStorageId = floatingNoteEntry
+    ? entryNoteId(floatingNoteEntry, notes)
+    : null;
+  const dockedNoteText = floatingNoteStorageId ? notes[floatingNoteStorageId] : null;
+  const naturalDockedNoteWidth = dockedNoteText
+    ? Math.min(760, Math.max(340, 300 + Math.sqrt(dockedNoteText.length) * 28))
+    : 0;
+  const viewerLeft = annotationHistoryMiniBounds
+    ? Math.max(0, viewerRef.current?.getBoundingClientRect().left ?? 0)
+    : 0;
+  const dockedNoteWidth = annotationHistoryMiniBounds
+    ? Math.min(
+        naturalDockedNoteWidth,
+        Math.max(280, annotationHistoryMiniBounds.left - viewerLeft - 48),
+      )
+    : naturalDockedNoteWidth;
+  const dockedNoteLeft = annotationHistoryMiniBounds
+    ? Math.max(
+        viewerLeft + 16,
+        viewerLeft + (annotationHistoryMiniBounds.left - viewerLeft - dockedNoteWidth) / 2,
+      )
+    : 16;
+  const showDockedHistoryNote = Boolean(
+    annotationHistoryOpen &&
+    annotationHistoryMiniBounds &&
+    floatingNoteStorageId &&
+    dockedNoteText,
   );
 
   return (
@@ -2933,10 +3010,38 @@ export function StudyReader() {
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
         onHighlightNote={addNoteTextHighlight}
+        onRemoveNoteHighlight={removeSelectedNoteTextHighlight}
+        onMiniBoundsChange={setAnnotationHistoryMiniBounds}
         noteFontScale={noteFontScale}
         onNoteFontScaleChange={setNoteFontScale}
         outline={OUTLINE}
       />
+
+      {showDockedHistoryNote && floatingNoteStorageId && dockedNoteText && (
+        <aside
+          className="floating-note history-docked-note"
+          role="note"
+          aria-label="快速复习批注预览"
+          style={{
+            "--floating-note-width": `${dockedNoteWidth}px`,
+            "--note-font-scale": noteFontScale,
+            left: `${dockedNoteLeft}px`,
+          } as CSSProperties}
+        >
+          <header>
+            <strong>批注</strong>
+            <button type="button" aria-label="关闭批注预览" onClick={() => setFloatingNoteEntryId(null)}>×</button>
+          </header>
+          <p>
+            <HighlightedNoteText
+              text={dockedNoteText}
+              ranges={noteHighlights[floatingNoteStorageId]}
+              entryId={floatingNoteStorageId}
+              versionId={activeVersionId}
+            />
+          </p>
+        </aside>
+      )}
 
       <section
         ref={viewerRef}
@@ -3222,6 +3327,7 @@ export function StudyReader() {
                     pageFloatingEntry &&
                     pageFloatingNoteId &&
                     notes[pageFloatingNoteId] &&
+                    !showDockedHistoryNote &&
                     visibleEntryIds.has(pageFloatingEntry.id) && (
                       <aside
                         className={`floating-note ${pageFloatingEntry.x > 0.66 ? "align-right" : ""} ${pageFloatingEntry.y > 0.72 ? "opens-upward" : ""}`}

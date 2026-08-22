@@ -1258,6 +1258,15 @@ kbd {
   transform: translateX(-100%);
 }
 
+.floating-note.history-docked-note {
+  position: fixed;
+  z-index: 98;
+  top: 50%;
+  width: min(var(--floating-note-width, 440px), calc(100vw - 32px));
+  transform: translateY(-50%);
+  transition: left 120ms ease-out, width 120ms ease-out;
+}
+
 .knowledge-locator {
   position: absolute;
   z-index: 8;
