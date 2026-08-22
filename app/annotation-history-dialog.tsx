@@ -82,6 +82,7 @@ export function AnnotationHistoryDialog({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const quickIndexRef = useRef(0);
+  const chapterRecordsRef = useRef<HTMLElement | null>(null);
   const miniDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -110,6 +111,14 @@ export function AnnotationHistoryDialog({
   const currentQuickRecord = quickRecords[safeQuickIndex] ?? null;
 
   useEffect(() => { quickIndexRef.current = quickIndex; }, [quickIndex]);
+
+  useEffect(() => {
+    if (view !== "chapter" || !selectedChapterId) return;
+    const frame = requestAnimationFrame(() => {
+      chapterRecordsRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedChapterId, view]);
 
   useEffect(() => {
     if (!open || !miniMode || !sheetRef.current) {
@@ -322,7 +331,7 @@ export function AnnotationHistoryDialog({
           {view === "chapter" && (
             <div className="annotation-chapter-reader">
               <aside className="annotation-chapter-tree" aria-label="按大纲章节选择批注"><header><strong>选择章节</strong><span>数字为该范围内批注数</span></header>{outline.map((node) => renderChapterNode(node))}</aside>
-              <section className="annotation-chapter-records">
+              <section ref={chapterRecordsRef} className="annotation-chapter-records">
                 <header><strong>{selectedChapterId ? `${chapterRecords.length} 条批注` : "请选择左侧章节"}</strong>{selectedChapterId && chapterRecords.length > 0 && <button type="button" onClick={startQuickReview}>快速复习本章</button>}</header>
                 {chapterRecords.map((record) => (
                   <article className={`annotation-reading-card ${record.id === lastVisitedRecordId ? "is-last-visited" : ""}`} key={record.id}>

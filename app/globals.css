@@ -3548,11 +3548,17 @@ kbd {
   padding: 16px 2px 2px;
 }
 
+.annotation-history-content.is-chapter {
+  overflow: hidden;
+}
+
 .annotation-chapter-reader {
   display: grid;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.18fr);
   gap: 20px;
+  overflow: hidden;
 }
 
 .annotation-chapter-tree,
@@ -3566,6 +3572,8 @@ kbd {
 
 .annotation-chapter-tree {
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .annotation-chapter-tree > header,
@@ -3629,6 +3637,8 @@ kbd {
 
 .annotation-chapter-records {
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .annotation-chapter-records > header button {
@@ -4304,6 +4314,8 @@ kbd {
 
   .annotation-chapter-reader {
     display: flex;
+    height: 100%;
+    min-height: 0;
     flex-direction: column;
   }
 
@@ -4313,7 +4325,9 @@ kbd {
   }
 
   .annotation-chapter-records {
-    overflow: visible;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
   }
 
   .annotation-history-content .annotation-calendar {
