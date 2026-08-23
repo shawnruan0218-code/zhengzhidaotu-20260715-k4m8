@@ -1261,10 +1261,32 @@ kbd {
 .floating-note.history-docked-note {
   position: fixed;
   z-index: 98;
-  top: 50%;
+  top: 18px;
   width: min(var(--floating-note-width, 440px), calc(100vw - 32px));
-  transform: translateY(-50%);
-  transition: left 120ms ease-out, width 120ms ease-out;
+  transform: none;
+  transition: left 120ms ease-out, top 120ms ease-out, width 120ms ease-out;
+}
+
+.floating-note.history-docked-note.is-dragging {
+  transition: none;
+}
+
+.floating-note.history-docked-note > header {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.floating-note.history-docked-note > header:active {
+  cursor: grabbing;
+}
+
+.floating-note.history-docked-note > header strong small {
+  margin-left: 6px;
+  color: #8e8e93;
+  font-size: 9px;
+  font-weight: 550;
 }
 
 .knowledge-locator {
@@ -2309,6 +2331,10 @@ kbd {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   animation: backdrop-in 150ms ease-out;
+}
+
+.annotation-backdrop.from-history {
+  z-index: 110;
 }
 
 .version-backdrop {
@@ -3544,7 +3570,8 @@ kbd {
 }
 
 .annotation-history-content.is-chapter,
-.annotation-history-content.is-quick {
+.annotation-history-content.is-quick,
+.annotation-history-content.is-library {
   padding: 16px 2px 2px;
 }
 
@@ -3727,6 +3754,51 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.annotation-quick-membership {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annotation-quick-membership button {
+  display: inline-flex;
+  height: 30px;
+  padding: 0 10px;
+  align-items: center;
+  gap: 6px;
+  color: #71308f;
+  font-size: 9px;
+  font-weight: 720;
+  background: rgba(175, 82, 222, 0.09);
+  border: 1px solid rgba(175, 82, 222, 0.15);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-quick-membership button.is-added {
+  color: #248a3d;
+  background: rgba(52, 199, 89, 0.1);
+  border-color: rgba(52, 199, 89, 0.18);
+}
+
+.annotation-quick-membership button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.annotation-quick-membership kbd {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: inherit;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.76);
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
 .annotation-quick-review > header small {
   color: #8e8e93;
 }
@@ -3765,6 +3837,112 @@ kbd {
   cursor: default;
 }
 
+.annotation-review-library {
+  width: min(820px, 100%);
+  margin: 0 auto;
+}
+
+.annotation-review-library > header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(249, 249, 252, 0.94);
+  border: 1px solid rgba(175, 82, 222, 0.1);
+  border-radius: 13px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.annotation-review-library > header div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.annotation-review-library > header span,
+.annotation-review-library-card small {
+  color: #8e8e93;
+  font-size: 9px;
+}
+
+.annotation-review-library > header button {
+  height: 32px;
+  padding: 0 12px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 720;
+  background: #9540b7;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-review-library > header button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.annotation-review-library-card {
+  margin-bottom: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 14px;
+}
+
+.annotation-review-library-card > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.annotation-review-library-card > div > button:first-child {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.annotation-review-library-card > div > button:first-child span {
+  flex: 0 0 auto;
+  color: #8b3bb0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.annotation-review-remove {
+  height: 28px;
+  padding: 0 9px;
+  color: #8e8e93;
+  font-size: 9px;
+  background: rgba(118, 118, 128, 0.08);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.annotation-review-library-card p {
+  margin: 10px 0;
+  color: #3a3a3c;
+  font-size: calc(13px * var(--note-font-scale, 1));
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
 .annotation-history-sheet.is-mini .annotation-history-tools {
   padding: 8px 10px 0;
   flex-wrap: wrap;
@@ -3781,7 +3959,8 @@ kbd {
 }
 
 .annotation-history-sheet.is-mini .annotation-history-content.is-quick,
-.annotation-history-sheet.is-mini .annotation-history-content.is-chapter {
+.annotation-history-sheet.is-mini .annotation-history-content.is-chapter,
+.annotation-history-sheet.is-mini .annotation-history-content.is-library {
   padding: 10px;
 }
 

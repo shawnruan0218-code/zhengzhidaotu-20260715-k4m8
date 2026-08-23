@@ -9,6 +9,16 @@ export type StudyVersion = {
   noteCreatedAt: Record<string, string>;
   highlightHistory: string[][];
   emphasizedEntries: string[];
+  reviewItems: Record<string, ReviewLibraryItem>;
+};
+
+export type ReviewLibraryItem = {
+  entryId: string;
+  page: number;
+  entryText: string;
+  entryY: number;
+  addedAt: string;
+  updatedAt: string;
 };
 
 export type NoteHighlightRange = {

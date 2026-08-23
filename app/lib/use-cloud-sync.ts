@@ -23,6 +23,7 @@ import {
   readCloudflareSession,
   type CloudflareUser,
 } from "./cloudflare-client";
+import { normalizeReviewItems } from "./review-library";
 import type { NoteHighlightRange, StoredSyncState, StudyVersion, Tombstone } from "./study-types";
 import { EPOCH_TIMESTAMP, nextIsoTimestamp } from "./study-types";
 import {
@@ -235,6 +236,7 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
         return normalized.length ? [[entryId, normalized]] : [];
       }))
     : {};
+  const reviewItems = normalizeReviewItems(value.reviewItems);
   return {
     id: value.id,
     name: value.name.trim() || "未命名版本",
@@ -255,6 +257,7 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
     emphasizedEntries: Array.isArray(value.emphasizedEntries)
       ? value.emphasizedEntries.filter((id): id is string => typeof id === "string")
       : [],
+    reviewItems,
   };
 }
 

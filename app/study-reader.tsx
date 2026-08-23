@@ -25,6 +25,7 @@ import {
   outlinePathForLocation,
   type OutlineNode,
 } from "./lib/outline-navigation";
+import { addReviewItem, normalizeReviewItems, removeReviewItem } from "./lib/review-library";
 import {
   attachLegacySummaryIds,
   buildLegacySummaryGroups,
@@ -229,6 +230,7 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
           }),
         )
       : {};
+  const reviewItems = normalizeReviewItems(candidate.reviewItems);
 
   return {
     id: candidate.id,
@@ -253,6 +255,7 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
     emphasizedEntries: Array.isArray(candidate.emphasizedEntries)
       ? candidate.emphasizedEntries.filter((id): id is string => typeof id === "string")
       : [],
+    reviewItems,
   };
 }
 
@@ -828,6 +831,8 @@ export function StudyReader() {
   const [hoveredEntryId, setHoveredEntryId] = useState<string | null>(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [floatingNoteEntryId, setFloatingNoteEntryId] = useState<string | null>(null);
+  const [dockedNotePosition, setDockedNotePosition] = useState<{ left: number; top: number } | null>(null);
+  const [isDockedNoteDragging, setIsDockedNoteDragging] = useState(false);
   const [noteFontScale, setNoteFontScale] = useState(0.9);
 
   useEffect(() => {
@@ -845,6 +850,15 @@ export function StudyReader() {
   const [noteDraft, setNoteDraft] = useState("");
   const [toast, setToast] = useState("");
   const viewerRef = useRef<HTMLElement | null>(null);
+  const dockedNoteRef = useRef<HTMLElement | null>(null);
+  const dockedNoteManuallyPositioned = useRef(false);
+  const dockedNoteDrag = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    left: number;
+    top: number;
+  } | null>(null);
   const pageRefs = useRef<Record<number, HTMLElement | null>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const knowledgeLocatorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1015,6 +1029,7 @@ export function StudyReader() {
           noteCreatedAt: {},
           highlightHistory: [],
           emphasizedEntries: [],
+          reviewItems: {},
         },
       ];
       loadedActiveVersionId = DEFAULT_VERSION_ID;
@@ -1205,6 +1220,7 @@ export function StudyReader() {
       noteCreatedAt: {},
       highlightHistory: [],
       emphasizedEntries: [],
+      reviewItems: {},
     };
     clearTransientStudyState();
     setVersions((current) => [...current, nextVersion]);
@@ -1590,6 +1606,64 @@ export function StudyReader() {
       selectVersion,
       showToast,
     ],
+  );
+
+  const editAnnotationRecord = useCallback(
+    (record: AnnotationRecord) => {
+      const entry = entriesById.get(record.entryId);
+      if (!entry) {
+        showToast("当前条目的文字数据尚未加载");
+        return;
+      }
+      if (record.versionId !== activeVersionId) selectVersion(record.versionId);
+      setFloatingNoteEntryId(null);
+      setActiveEntryId(record.entryId);
+      setNoteDraft(record.note);
+    },
+    [activeVersionId, entriesById, selectVersion, showToast],
+  );
+
+  const addAnnotationToReview = useCallback(
+    (record: AnnotationRecord) => {
+      const alreadySelected = versions.some(
+        (version) => version.id === record.versionId && Boolean(version.reviewItems[record.entryId]),
+      );
+      if (alreadySelected) {
+        showToast("这条已经在复习库中");
+        return;
+      }
+      const timestamp = nextIsoTimestamp();
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== record.versionId) return version;
+          if (version.reviewItems[record.entryId]) return version;
+          return {
+            ...version,
+            reviewItems: addReviewItem(version.reviewItems, record, timestamp),
+            updatedAt: nextIsoTimestamp(version.updatedAt),
+          };
+        }),
+      );
+      showToast("已加入复习库");
+    },
+    [showToast, versions],
+  );
+
+  const removeAnnotationFromReview = useCallback(
+    (record: AnnotationRecord) => {
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== record.versionId || !version.reviewItems[record.entryId]) return version;
+          return {
+            ...version,
+            reviewItems: removeReviewItem(version.reviewItems, record.entryId),
+            updatedAt: nextIsoTimestamp(version.updatedAt),
+          };
+        }),
+      );
+      showToast("已移出复习库，原批注保持不变");
+    },
+    [showToast],
   );
 
   useEffect(() => {
@@ -2574,6 +2648,34 @@ export function StudyReader() {
         ),
     [entriesById, versions],
   );
+  const reviewRecords = useMemo(
+    () =>
+      versions
+        .flatMap((version) =>
+          Object.values(version.reviewItems).map((item) => {
+            const entry = entriesById.get(item.entryId);
+            return {
+              id: `${version.id}::${item.entryId}`,
+              versionId: version.id,
+              versionName: version.name,
+              entryId: item.entryId,
+              page: entry?.page ?? item.page,
+              entryText: entry?.text.trim() || item.entryText,
+              note: version.notes[item.entryId] ?? "",
+              noteHighlights: version.noteHighlights[item.entryId] ?? [],
+              entryY: entry?.y ?? item.entryY,
+              outlinePath: outlinePathForLocation(
+                OUTLINE,
+                entry?.page ?? item.page,
+                entry?.y ?? item.entryY,
+              ),
+              createdAt: item.addedAt,
+            } satisfies AnnotationRecord;
+          }),
+        )
+        .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
+    [entriesById, versions],
+  );
 
   const floatingNoteEntry = floatingNoteEntryId
     ? entriesById.get(floatingNoteEntryId) ?? null
@@ -2606,6 +2708,126 @@ export function StudyReader() {
     floatingNoteStorageId &&
     dockedNoteText,
   );
+
+  useEffect(() => {
+    dockedNoteManuallyPositioned.current = false;
+    dockedNoteDrag.current = null;
+    setIsDockedNoteDragging(false);
+    setDockedNotePosition(null);
+  }, [floatingNoteEntryId]);
+
+  useEffect(() => {
+    if (!annotationLocator) return;
+    dockedNoteManuallyPositioned.current = false;
+    setDockedNotePosition(null);
+  }, [annotationLocator?.animationId]);
+
+  useEffect(() => {
+    if (!showDockedHistoryNote || !annotationHistoryMiniBounds) return;
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    let frame = 0;
+    const placeNote = () => {
+      if (dockedNoteManuallyPositioned.current) return;
+      const note = dockedNoteRef.current;
+      if (!note) return;
+      const noteRect = note.getBoundingClientRect();
+      const locator = document.querySelector<HTMLElement>(".annotation-locator");
+      const locatorRect = locator?.getBoundingClientRect() ?? null;
+      const edge = 18;
+      const gap = 30;
+      const maximumLeft = Math.max(edge, window.innerWidth - noteRect.width - edge);
+      const left = Math.min(maximumLeft, Math.max(edge, dockedNoteLeft));
+      const maximumTop = Math.max(edge, window.innerHeight - noteRect.height - edge);
+      let top = Math.min(maximumTop, Math.max(edge, (window.innerHeight - noteRect.height) / 2));
+
+      if (locatorRect) {
+        const horizontalOverlap =
+          left < locatorRect.right + gap && left + noteRect.width > locatorRect.left - gap;
+        const verticalOverlap =
+          top < locatorRect.bottom + gap && top + noteRect.height > locatorRect.top - gap;
+        if (horizontalOverlap && verticalOverlap) {
+          const above = locatorRect.top - gap - noteRect.height;
+          const below = locatorRect.bottom + gap;
+          const aboveFits = above >= edge;
+          const belowFits = below + noteRect.height <= window.innerHeight - edge;
+          if (belowFits && (!aboveFits || window.innerHeight - locatorRect.bottom >= locatorRect.top)) {
+            top = below;
+          } else if (aboveFits) {
+            top = above;
+          } else {
+            const spaceAbove = Math.max(0, locatorRect.top - edge);
+            const spaceBelow = Math.max(0, window.innerHeight - edge - locatorRect.bottom);
+            top = spaceBelow >= spaceAbove ? maximumTop : edge;
+          }
+        }
+      }
+      setDockedNotePosition((current) =>
+        current && Math.abs(current.left - left) < 0.5 && Math.abs(current.top - top) < 0.5
+          ? current
+          : { left, top },
+      );
+    };
+
+    frame = requestAnimationFrame(placeNote);
+    [180, 420, 760].forEach((delay) => timers.push(setTimeout(placeNote, delay)));
+    return () => {
+      cancelAnimationFrame(frame);
+      timers.forEach(clearTimeout);
+    };
+  }, [
+    annotationHistoryMiniBounds,
+    annotationLocator?.animationId,
+    dockedNoteLeft,
+    dockedNoteText,
+    dockedNoteWidth,
+    noteFontScale,
+    showDockedHistoryNote,
+  ]);
+
+  const startDockedNoteDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    const note = dockedNoteRef.current;
+    if (!note) return;
+    const rect = note.getBoundingClientRect();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dockedNoteManuallyPositioned.current = true;
+    dockedNoteDrag.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top,
+    };
+    setIsDockedNoteDragging(true);
+    setDockedNotePosition({ left: rect.left, top: rect.top });
+  }, []);
+
+  const moveDockedNote = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dockedNoteDrag.current;
+    const note = dockedNoteRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !note) return;
+    const rect = note.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(8, window.innerWidth - rect.width - 8),
+      Math.max(8, drag.left + event.clientX - drag.startX),
+    );
+    const top = Math.min(
+      Math.max(8, window.innerHeight - rect.height - 8),
+      Math.max(8, drag.top + event.clientY - drag.startY),
+    );
+    setDockedNotePosition({ left, top });
+  }, []);
+
+  const stopDockedNoteDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dockedNoteDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    dockedNoteDrag.current = null;
+    setIsDockedNoteDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   return (
     <main className="reader-shell">
@@ -3007,8 +3229,12 @@ export function StudyReader() {
       <AnnotationHistoryDialog
         open={annotationHistoryOpen}
         records={annotationRecords}
+        reviewRecords={reviewRecords}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
+        onEdit={editAnnotationRecord}
+        onAddToReview={addAnnotationToReview}
+        onRemoveFromReview={removeAnnotationFromReview}
         onHighlightNote={addNoteTextHighlight}
         onRemoveNoteHighlight={removeSelectedNoteTextHighlight}
         onMiniBoundsChange={setAnnotationHistoryMiniBounds}
@@ -3019,17 +3245,19 @@ export function StudyReader() {
 
       {showDockedHistoryNote && floatingNoteStorageId && dockedNoteText && (
         <aside
-          className="floating-note history-docked-note"
+          ref={dockedNoteRef}
+          className={`floating-note history-docked-note ${isDockedNoteDragging ? "is-dragging" : ""}`}
           role="note"
           aria-label="快速复习批注预览"
           style={{
             "--floating-note-width": `${dockedNoteWidth}px`,
             "--note-font-scale": noteFontScale,
-            left: `${dockedNoteLeft}px`,
+            left: `${dockedNotePosition?.left ?? dockedNoteLeft}px`,
+            top: `${dockedNotePosition?.top ?? 18}px`,
           } as CSSProperties}
         >
-          <header>
-            <strong>批注</strong>
+          <header onPointerDown={startDockedNoteDrag} onPointerMove={moveDockedNote} onPointerUp={stopDockedNoteDrag} onPointerCancel={stopDockedNoteDrag}>
+            <strong>批注 <small>拖动可移开</small></strong>
             <button type="button" aria-label="关闭批注预览" onClick={() => setFloatingNoteEntryId(null)}>×</button>
           </header>
           <p>
@@ -3501,7 +3729,7 @@ export function StudyReader() {
       )}
 
       {activeEntry && (
-        <div className="annotation-backdrop" role="presentation" onMouseDown={closeAnnotation}>
+        <div className={`annotation-backdrop ${annotationHistoryOpen ? "from-history" : ""}`} role="presentation" onMouseDown={closeAnnotation}>
           <section
             className="annotation-sheet"
             role="dialog"
