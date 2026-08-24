@@ -13,7 +13,7 @@
     "build:pages": "npm run build:knowledge-index && BUILD_GITHUB_PAGES=1 next build",
     "start": "vinext start",
     "test": "npm run test:sync && npm run build:pages",
-    "test:sync": "node --experimental-strip-types --test tests/sync-core.test.mjs tests/project-isolation.test.mjs tests/knowledge-search.test.mjs tests/summary-entry-groups.test.mjs tests/note-highlights.test.mjs tests/review-library.test.mjs tests/annotation-sync.test.mjs",
+    "test:sync": "node --experimental-strip-types --test tests/sync-core.test.mjs tests/project-isolation.test.mjs tests/knowledge-search.test.mjs tests/summary-entry-groups.test.mjs tests/note-highlights.test.mjs tests/review-library.test.mjs tests/annotation-sync.test.mjs tests/keyboard-shortcuts.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern cloudflare",
     "cf:dev": "wrangler dev --config cloudflare/wrangler.jsonc",
     "cf:deploy": "wrangler deploy --config cloudflare/wrangler.jsonc",

@@ -20,6 +20,7 @@ import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import { normalizeAnnotationUpdatedAt } from "./lib/annotation-sync";
+import { shortcutKey } from "./lib/keyboard-shortcuts";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
 import { removeNoteHighlightSelection } from "./lib/note-highlights";
 import {
@@ -49,6 +50,7 @@ import {
 } from "./lib/study-types";
 import { useCloudSync } from "./lib/use-cloud-sync";
 import {
+  clearRememberedNoteText,
   HighlightedNoteText,
   readSelectedNoteText,
   type SelectedNoteText,
@@ -1514,6 +1516,7 @@ export function StudyReader() {
         }),
       );
       window.getSelection()?.removeAllRanges();
+      clearRememberedNoteText();
       showToast("已高亮批注中的选中文字");
     },
     [showToast],
@@ -1558,6 +1561,7 @@ export function StudyReader() {
         }),
       );
       window.getSelection()?.removeAllRanges();
+      clearRememberedNoteText();
       showToast(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
     },
     [showToast, versions],
@@ -2141,6 +2145,7 @@ export function StudyReader() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      const shortcut = shortcutKey(event);
       const isTyping =
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
@@ -2180,7 +2185,7 @@ export function StudyReader() {
           !event.ctrlKey &&
           !event.altKey &&
           (
-            event.key.toLowerCase() === "h" ||
+            shortcut === "h" ||
             event.key === "·" ||
             (event.code === "Backquote" && !event.shiftKey)
           );
@@ -2193,7 +2198,17 @@ export function StudyReader() {
           !isTyping &&
           interactionMode === "entry" &&
           (event.code === "Space" || event.key === " ");
-        if (!isOutsideEntryNotePreview) return;
+        const isMainPageEntryShortcut =
+          !isTyping &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          interactionMode === "entry" &&
+          (shortcut === "q" || shortcut === "e") &&
+          Boolean(
+            document.querySelector<HTMLElement>(".entry-hotspot:hover") ?? hoveredEntryId,
+          );
+        if (!isOutsideEntryNotePreview && !isMainPageEntryShortcut) return;
       }
 
       if (
@@ -2201,12 +2216,12 @@ export function StudyReader() {
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
-        (event.key.toLowerCase() === "d" || event.key.toLowerCase() === "f")
+        (shortcut === "d" || shortcut === "f")
       ) {
         const selectedNote = readSelectedNoteText();
         if (selectedNote) {
           event.preventDefault();
-          if (event.key.toLowerCase() === "d") addNoteTextHighlight(selectedNote);
+          if (shortcut === "d") addNoteTextHighlight(selectedNote);
           else removeSelectedNoteTextHighlight(selectedNote);
           return;
         }
@@ -2323,7 +2338,7 @@ export function StudyReader() {
         }
       }
 
-      if (!isTyping && interactionMode === "entry" && event.key.toLowerCase() === "q") {
+      if (!isTyping && interactionMode === "entry" && shortcut === "q") {
         const targetedHotspot =
           document.querySelector<HTMLElement>(".entry-hotspot:hover") ??
           (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".entry-hotspot");
@@ -2340,7 +2355,7 @@ export function StudyReader() {
         !isTyping &&
         !activeEntryId &&
         interactionMode === "entry" &&
-        event.key.toLowerCase() === "e"
+        shortcut === "e"
       ) {
         if (event.repeat) {
           event.preventDefault();

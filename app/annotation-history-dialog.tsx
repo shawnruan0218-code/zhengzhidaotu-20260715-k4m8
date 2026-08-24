@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
 import { STORAGE_KEYS } from "./lib/app-config";
+import { shortcutKey } from "./lib/keyboard-shortcuts";
 import type { OutlineNode } from "./lib/outline-navigation";
 import type { AnnotationRecord, ReviewLibraryLevel } from "./lib/study-types";
 import {
@@ -184,7 +185,7 @@ function InlineNoteEditor({
           setEditing(false);
         }}
         onKeyDown={(event) => {
-          const key = event.key.toLowerCase();
+          const key = shortcutKey(event);
           const textarea = event.currentTarget;
           if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f") && textarea.selectionEnd > textarea.selectionStart) {
             event.preventDefault();
@@ -235,6 +236,21 @@ function InlineNoteEditor({
         });
       }}
       onKeyDown={(event) => {
+        const key = shortcutKey(event);
+        if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f")) {
+          const selection = readSelectedNoteText();
+          if (
+            selection &&
+            selection.entryId === record.entryId &&
+            selection.versionId === record.versionId
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (key === "d") onHighlight(selection);
+            else onRemoveHighlight(selection);
+          }
+          return;
+        }
         if (event.key !== "Enter" && event.key !== "F2") return;
         event.preventDefault();
         setEditing(true);
@@ -446,7 +462,7 @@ export function AnnotationHistoryDialog({
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select") || target?.isContentEditable) return;
 
-      const selectionKey = event.key.toLowerCase();
+      const selectionKey = shortcutKey(event);
       if (!event.metaKey && !event.ctrlKey && !event.altKey && (selectionKey === "d" || selectionKey === "f")) {
         const selection = readSelectedNoteText();
         if (selection) {
@@ -458,7 +474,7 @@ export function AnnotationHistoryDialog({
         return;
       }
       if (view !== "quick" || event.metaKey || event.ctrlKey || event.altKey) return;
-      const key = event.key.toLowerCase();
+      const key = shortcutKey(event);
       if (key === "1" && currentQuickRecord && targetLibraryLevel) {
         event.preventDefault();
         event.stopPropagation();

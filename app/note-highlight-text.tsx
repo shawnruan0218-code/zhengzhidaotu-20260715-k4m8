@@ -19,6 +19,12 @@ export type SelectedNoteText = {
   quote: string;
 };
 
+let rememberedSelection: {
+  value: SelectedNoteText;
+  capturedAt: number;
+  root: HTMLElement;
+} | null = null;
+
 function mergedRanges(text: string, ranges: NoteHighlightRange[]) {
   return resolveNoteHighlightRanges(text, ranges)
     .sort((left, right) => left.start - right.start || left.end - right.end)
@@ -56,13 +62,19 @@ export function HighlightedNoteText({
       data-note-highlight-root="true"
       data-note-entry-id={entryId}
       data-note-version-id={versionId}
+      onPointerDown={() => {
+        rememberedSelection = null;
+      }}
+      onPointerUp={() => {
+        requestAnimationFrame(() => rememberSelectedNoteText());
+      }}
     >
       {pieces.length ? pieces : text}
     </span>
   );
 }
 
-export function readSelectedNoteText(): SelectedNoteText | null {
+function readLiveSelectedNoteText(): (SelectedNoteText & { root: HTMLElement }) | null {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
   const range = selection.getRangeAt(0);
@@ -87,5 +99,31 @@ export function readSelectedNoteText(): SelectedNoteText | null {
   const entryId = root.dataset.noteEntryId;
   const versionId = root.dataset.noteVersionId;
   if (!entryId || !versionId) return null;
-  return { entryId, versionId, start, end: start + quote.length, quote };
+  return { entryId, versionId, start, end: start + quote.length, quote, root };
+}
+
+export function rememberSelectedNoteText(): SelectedNoteText | null {
+  const live = readLiveSelectedNoteText();
+  if (!live) return null;
+  const { root, ...value } = live;
+  rememberedSelection = { value, root, capturedAt: Date.now() };
+  return value;
+}
+
+export function clearRememberedNoteText(): void {
+  rememberedSelection = null;
+}
+
+export function readSelectedNoteText(): SelectedNoteText | null {
+  const live = rememberSelectedNoteText();
+  if (live) return live;
+  if (
+    rememberedSelection &&
+    rememberedSelection.root.isConnected &&
+    Date.now() - rememberedSelection.capturedAt <= 5_000
+  ) {
+    return rememberedSelection.value;
+  }
+  rememberedSelection = null;
+  return null;
 }
