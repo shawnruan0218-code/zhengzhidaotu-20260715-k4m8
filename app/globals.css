@@ -3888,6 +3888,52 @@ kbd {
   cursor: default;
 }
 
+.annotation-review-levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 6px;
+  background: rgba(175, 82, 222, 0.055);
+  border: 1px solid rgba(175, 82, 222, 0.09);
+  border-radius: 13px;
+}
+
+.annotation-review-levels button {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #6e6e73;
+  font-size: 10px;
+  font-weight: 680;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.annotation-review-levels button strong {
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  place-items: center;
+  color: #8b3bb0;
+  font-size: 8px;
+  background: rgba(175, 82, 222, 0.1);
+  border-radius: 999px;
+}
+
+.annotation-review-levels button.is-active {
+  color: #7d329f;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 2px 9px rgba(100, 44, 124, 0.1);
+}
+
 .annotation-review-library-card {
   margin-bottom: 10px;
   padding: 14px;
@@ -3935,12 +3981,34 @@ kbd {
   cursor: pointer;
 }
 
-.annotation-review-library-card p {
+.annotation-review-note-edit {
+  position: relative;
+  display: block;
+  width: 100%;
   margin: 10px 0;
+  padding: 9px 10px 10px;
   color: #3a3a3c;
   font-size: calc(13px * var(--note-font-scale, 1));
   line-height: 1.65;
+  text-align: left;
   white-space: pre-wrap;
+  background: rgba(175, 82, 222, 0.035);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: text;
+  transition: 150ms ease;
+}
+
+.annotation-review-note-edit:hover {
+  background: rgba(175, 82, 222, 0.065);
+  border-color: rgba(175, 82, 222, 0.13);
+}
+
+.annotation-review-note-edit small {
+  display: block;
+  margin-top: 3px;
+  color: #9d59b8;
+  font-size: 8px;
 }
 
 .annotation-history-sheet.is-mini .annotation-history-tools {

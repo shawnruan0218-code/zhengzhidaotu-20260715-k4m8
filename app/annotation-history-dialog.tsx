@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
 import type { OutlineNode } from "./lib/outline-navigation";
-import type { AnnotationRecord } from "./lib/study-types";
+import type { AnnotationRecord, ReviewLibraryLevel } from "./lib/study-types";
 import {
   HighlightedNoteText,
   readSelectedNoteText,
@@ -33,15 +33,15 @@ export type MiniReviewBounds = {
 type Props = {
   open: boolean;
   records: AnnotationRecord[];
-  reviewRecords: AnnotationRecord[];
+  reviewRecordsByLevel: Record<ReviewLibraryLevel, AnnotationRecord[]>;
   outline: OutlineNode[];
   noteFontScale: number;
   onNoteFontScaleChange: (scale: number) => void;
   onClose: () => void;
   onJump: (record: AnnotationRecord, options?: { showNote?: boolean }) => void;
   onEdit: (record: AnnotationRecord) => void;
-  onAddToReview: (record: AnnotationRecord) => void;
-  onRemoveFromReview: (record: AnnotationRecord) => void;
+  onAddToReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
+  onRemoveFromReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
   onHighlightNote: (selection: SelectedNoteText) => void;
   onRemoveNoteHighlight: (selection: SelectedNoteText) => void;
   onMiniBoundsChange: (bounds: MiniReviewBounds | null) => void;
@@ -67,7 +67,7 @@ function RecordNote({ record }: { record: AnnotationRecord }) {
 export function AnnotationHistoryDialog({
   open,
   records,
-  reviewRecords,
+  reviewRecordsByLevel,
   outline,
   noteFontScale,
   onNoteFontScaleChange,
@@ -87,6 +87,8 @@ export function AnnotationHistoryDialog({
   const [miniPosition, setMiniPosition] = useState<{ left: number; top: number } | null>(null);
   const [view, setView] = useState<HistoryView>("calendar");
   const [quickScope, setQuickScope] = useState<QuickScope>("all");
+  const [selectedLibraryLevel, setSelectedLibraryLevel] = useState<ReviewLibraryLevel>(1);
+  const [quickLibraryLevel, setQuickLibraryLevel] = useState<ReviewLibraryLevel>(1);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [quickIndex, setQuickIndex] = useState(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -116,14 +118,18 @@ export function AnnotationHistoryDialog({
       : [],
     [records, selectedChapterId],
   );
+  const selectedLibraryRecords = reviewRecordsByLevel[selectedLibraryLevel];
   const quickRecords = quickScope === "library"
-    ? reviewRecords
+    ? reviewRecordsByLevel[quickLibraryLevel]
     : quickScope === "chapter" && selectedChapterId && chapterRecords.length
       ? chapterRecords
       : records;
-  const reviewRecordIds = useMemo(
-    () => new Set(reviewRecords.map((record) => record.id)),
-    [reviewRecords],
+  const targetLibraryLevel: ReviewLibraryLevel | null = quickScope === "library"
+    ? quickLibraryLevel < 3 ? (quickLibraryLevel + 1) as ReviewLibraryLevel : null
+    : 1;
+  const targetReviewRecordIds = useMemo(
+    () => new Set(targetLibraryLevel ? reviewRecordsByLevel[targetLibraryLevel].map((record) => record.id) : []),
+    [reviewRecordsByLevel, targetLibraryLevel],
   );
   const safeQuickIndex = Math.min(quickIndex, Math.max(0, quickRecords.length - 1));
   const currentQuickRecord = quickRecords[safeQuickIndex] ?? null;
@@ -212,14 +218,15 @@ export function AnnotationHistoryDialog({
     visitRecord(quickRecords[bounded], true);
   }, [quickRecords, visitRecord]);
 
-  const startQuickReview = (scope: QuickScope = "all") => {
+  const startQuickReview = (scope: QuickScope = "all", libraryLevel: ReviewLibraryLevel = selectedLibraryLevel) => {
     const scopedRecords = scope === "library"
-      ? reviewRecords
+      ? reviewRecordsByLevel[libraryLevel]
       : scope === "chapter" && selectedChapterId && chapterRecords.length
         ? chapterRecords
         : records;
     if (!scopedRecords.length) return;
     setQuickScope(scope);
+    if (scope === "library") setQuickLibraryLevel(libraryLevel);
     const rememberedIndex = scopedRecords.findIndex((record) => record.id === lastVisitedRecordId);
     const initialIndex = Math.max(0, rememberedIndex);
     setView("quick");
@@ -254,10 +261,10 @@ export function AnnotationHistoryDialog({
         if (!event.repeat) onEdit(currentQuickRecord);
         return;
       }
-      if (key === "1" && currentQuickRecord) {
+      if (key === "1" && currentQuickRecord && targetLibraryLevel) {
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat) onAddToReview(currentQuickRecord);
+        if (!event.repeat) onAddToReview(currentQuickRecord, targetLibraryLevel);
         return;
       }
       if (key !== "a" && key !== "s") return;
@@ -267,7 +274,7 @@ export function AnnotationHistoryDialog({
     };
     window.addEventListener("keydown", handleReviewKeys, true);
     return () => window.removeEventListener("keydown", handleReviewKeys, true);
-  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onEdit, onHighlightNote, onRemoveNoteHighlight, open, view]);
+  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onEdit, onHighlightNote, onRemoveNoteHighlight, open, targetLibraryLevel, view]);
 
   const handleMiniPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (!miniMode || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
@@ -299,7 +306,7 @@ export function AnnotationHistoryDialog({
     <nav className="annotation-history-modes" aria-label="批注复习方式">
       <button type="button" className={view === "calendar" ? "is-active" : ""} onClick={() => setView("calendar")}>日历阅读</button>
       <button type="button" className={view === "chapter" ? "is-active" : ""} onClick={() => setView("chapter")}>章节阅读</button>
-      <button type="button" className={view === "library" ? "is-active" : ""} onClick={() => setView("library")}>复习库 {reviewRecords.length}</button>
+      <button type="button" className={view === "library" ? "is-active" : ""} onClick={() => { setSelectedLibraryLevel(1); setView("library"); }}>复习库 1</button>
       <button type="button" className={view === "quick" ? "is-active" : ""} onClick={() => startQuickReview("all")}>快速复习</button>
     </nav>
   );
@@ -386,12 +393,15 @@ export function AnnotationHistoryDialog({
 
           {view === "library" && (
             <section className="annotation-review-library" aria-label="复习库">
-              <header><div><strong>复习库</strong><span>{reviewRecords.length} 个独立词条</span></div><button type="button" disabled={!reviewRecords.length} onClick={() => startQuickReview("library")}>开始复习</button></header>
-              {!reviewRecords.length && <p className="annotation-calendar-no-records">快速复习时按 1，或点击“加入复习库”</p>}
-              {reviewRecords.map((record) => (
+              <header><div><strong>复习库 {selectedLibraryLevel}</strong><span>{selectedLibraryRecords.length} 个独立词条</span></div><button type="button" disabled={!selectedLibraryRecords.length} onClick={() => startQuickReview("library", selectedLibraryLevel)}>开始复习</button></header>
+              <nav className="annotation-review-levels" aria-label="选择复习库层级">
+                {([1, 2, 3] as const).map((level) => <button type="button" className={selectedLibraryLevel === level ? "is-active" : ""} onClick={() => setSelectedLibraryLevel(level)} key={level}><span>复习库 {level}</span><strong>{reviewRecordsByLevel[level].length}</strong></button>)}
+              </nav>
+              {!selectedLibraryRecords.length && <p className="annotation-calendar-no-records">{selectedLibraryLevel === 1 ? "快速复习时按 1，或点击“加入复习库”" : `在复习库 ${selectedLibraryLevel - 1} 复习时按 1 加入`}</p>}
+              {selectedLibraryRecords.map((record) => (
                 <article className="annotation-review-library-card" key={record.id}>
-                  <div><button type="button" onClick={() => visitRecord(record, true)}><strong>{record.entryText}</strong><span>第 {record.page} 页 ›</span></button><button type="button" className="annotation-review-remove" onClick={() => onRemoveFromReview(record)}>移出</button></div>
-                  {record.note && <p><RecordNote record={record} /></p>}
+                  <div><button type="button" onClick={() => visitRecord(record, true)}><strong>{record.entryText}</strong><span>第 {record.page} 页 ›</span></button><button type="button" className="annotation-review-remove" onClick={() => onRemoveFromReview(record, selectedLibraryLevel)}>移出</button></div>
+                  {record.note && <button type="button" className="annotation-review-note-edit" aria-label={`修改“${record.entryText}”的批注`} onClick={() => onEdit(record)}><RecordNote record={record} /><small>点击修改</small></button>}
                   <small>{record.outlinePath.map((item) => item.title).join(" › ")}</small>
                 </article>
               ))}
@@ -401,7 +411,7 @@ export function AnnotationHistoryDialog({
           {view === "quick" && (
             <section className="annotation-quick-review" aria-live="polite">
               {currentQuickRecord ? <>
-                <header><span>{safeQuickIndex + 1} / {quickRecords.length}</span><div className="annotation-quick-membership"><small>{quickScope === "library" ? "复习库" : quickScope === "chapter" ? "当前章节" : "全部批注"}</small><button type="button" className={reviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord)} disabled={reviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{reviewRecordIds.has(currentQuickRecord.id) ? "已加入复习库" : "加入复习库"}</button></div></header>
+                <header><span>{safeQuickIndex + 1} / {quickRecords.length}</span><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
                 <div className="annotation-quick-source"><strong>{currentQuickRecord.entryText}</strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
                 <p className="annotation-quick-note"><RecordNote record={currentQuickRecord} /></p>
                 <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" onClick={() => onEdit(currentQuickRecord)}><kbd>E</kbd> 添加/编辑批注</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>

@@ -25,7 +25,12 @@ import {
   outlinePathForLocation,
   type OutlineNode,
 } from "./lib/outline-navigation";
-import { addReviewItem, normalizeReviewItems, removeReviewItem } from "./lib/review-library";
+import {
+  addReviewItemToLevel,
+  normalizeReviewItems,
+  removeReviewItemFromLevel,
+  REVIEW_LIBRARY_LEVELS,
+} from "./lib/review-library";
 import {
   attachLegacySummaryIds,
   buildLegacySummaryGroups,
@@ -36,6 +41,7 @@ import {
   nextIsoTimestamp,
   type AnnotationRecord,
   type NoteHighlightRange,
+  type ReviewLibraryLevel,
   type StoredLibrary,
   type StoredSettings,
   type StudyVersion,
@@ -1616,7 +1622,7 @@ export function StudyReader() {
         return;
       }
       if (record.versionId !== activeVersionId) selectVersion(record.versionId);
-      setFloatingNoteEntryId(null);
+      setFloatingNoteEntryId(record.entryId);
       setActiveEntryId(record.entryId);
       setNoteDraft(record.note);
     },
@@ -1624,44 +1630,45 @@ export function StudyReader() {
   );
 
   const addAnnotationToReview = useCallback(
-    (record: AnnotationRecord) => {
+    (record: AnnotationRecord, level: ReviewLibraryLevel) => {
       const alreadySelected = versions.some(
-        (version) => version.id === record.versionId && Boolean(version.reviewItems[record.entryId]),
+        (version) => version.id === record.versionId && Boolean(version.reviewItems[record.entryId]?.levels.includes(level)),
       );
       if (alreadySelected) {
-        showToast("这条已经在复习库中");
+        showToast(`这条已经在复习库 ${level} 中`);
         return;
       }
       const timestamp = nextIsoTimestamp();
       setVersions((current) =>
         current.map((version) => {
           if (version.id !== record.versionId) return version;
-          if (version.reviewItems[record.entryId]) return version;
+          if (version.reviewItems[record.entryId]?.levels.includes(level)) return version;
           return {
             ...version,
-            reviewItems: addReviewItem(version.reviewItems, record, timestamp),
+            reviewItems: addReviewItemToLevel(version.reviewItems, record, level, timestamp),
             updatedAt: nextIsoTimestamp(version.updatedAt),
           };
         }),
       );
-      showToast("已加入复习库");
+      showToast(`已加入复习库 ${level}`);
     },
     [showToast, versions],
   );
 
   const removeAnnotationFromReview = useCallback(
-    (record: AnnotationRecord) => {
+    (record: AnnotationRecord, level: ReviewLibraryLevel) => {
+      const timestamp = nextIsoTimestamp();
       setVersions((current) =>
         current.map((version) => {
-          if (version.id !== record.versionId || !version.reviewItems[record.entryId]) return version;
+          if (version.id !== record.versionId || !version.reviewItems[record.entryId]?.levels.includes(level)) return version;
           return {
             ...version,
-            reviewItems: removeReviewItem(version.reviewItems, record.entryId),
+            reviewItems: removeReviewItemFromLevel(version.reviewItems, record.entryId, level, timestamp),
             updatedAt: nextIsoTimestamp(version.updatedAt),
           };
         }),
       );
-      showToast("已移出复习库，原批注保持不变");
+      showToast(level === 1 ? "已移出全部复习库，原批注保持不变" : `已移出复习库 ${level} 及后续层级，原批注保持不变`);
     },
     [showToast],
   );
@@ -2648,32 +2655,37 @@ export function StudyReader() {
         ),
     [entriesById, versions],
   );
-  const reviewRecords = useMemo(
-    () =>
-      versions
-        .flatMap((version) =>
-          Object.values(version.reviewItems).map((item) => {
-            const entry = entriesById.get(item.entryId);
-            return {
-              id: `${version.id}::${item.entryId}`,
-              versionId: version.id,
-              versionName: version.name,
-              entryId: item.entryId,
-              page: entry?.page ?? item.page,
-              entryText: entry?.text.trim() || item.entryText,
-              note: version.notes[item.entryId] ?? "",
-              noteHighlights: version.noteHighlights[item.entryId] ?? [],
-              entryY: entry?.y ?? item.entryY,
-              outlinePath: outlinePathForLocation(
-                OUTLINE,
-                entry?.page ?? item.page,
-                entry?.y ?? item.entryY,
-              ),
-              createdAt: item.addedAt,
-            } satisfies AnnotationRecord;
-          }),
-        )
-        .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
+  const reviewRecordsByLevel = useMemo(
+    () => Object.fromEntries(
+      REVIEW_LIBRARY_LEVELS.map((level) => [
+        level,
+        versions
+          .flatMap((version) =>
+            Object.values(version.reviewItems).flatMap((item) => {
+              if (!item.levels.includes(level)) return [];
+              const entry = entriesById.get(item.entryId);
+              return [{
+                id: `${version.id}::${item.entryId}`,
+                versionId: version.id,
+                versionName: version.name,
+                entryId: item.entryId,
+                page: entry?.page ?? item.page,
+                entryText: entry?.text.trim() || item.entryText,
+                note: version.notes[item.entryId] ?? "",
+                noteHighlights: version.noteHighlights[item.entryId] ?? [],
+                entryY: entry?.y ?? item.entryY,
+                outlinePath: outlinePathForLocation(
+                  OUTLINE,
+                  entry?.page ?? item.page,
+                  entry?.y ?? item.entryY,
+                ),
+                createdAt: item.addedAtByLevel[level] ?? item.addedAt,
+              } satisfies AnnotationRecord];
+            }),
+          )
+          .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? "")),
+      ]),
+    ) as Record<ReviewLibraryLevel, AnnotationRecord[]>,
     [entriesById, versions],
   );
 
@@ -3229,7 +3241,7 @@ export function StudyReader() {
       <AnnotationHistoryDialog
         open={annotationHistoryOpen}
         records={annotationRecords}
-        reviewRecords={reviewRecords}
+        reviewRecordsByLevel={reviewRecordsByLevel}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
         onEdit={editAnnotationRecord}

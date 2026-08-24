@@ -12,6 +12,8 @@ export type StudyVersion = {
   reviewItems: Record<string, ReviewLibraryItem>;
 };
 
+export type ReviewLibraryLevel = 1 | 2 | 3;
+
 export type ReviewLibraryItem = {
   entryId: string;
   page: number;
@@ -19,6 +21,8 @@ export type ReviewLibraryItem = {
   entryY: number;
   addedAt: string;
   updatedAt: string;
+  levels: ReviewLibraryLevel[];
+  addedAtByLevel: Partial<Record<ReviewLibraryLevel, string>>;
 };
 
 export type NoteHighlightRange = {
