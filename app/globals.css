@@ -3145,7 +3145,7 @@ kbd {
   display: grid;
   min-height: 58px;
   padding: 9px 13px;
-  grid-template-columns: auto minmax(0, 1fr) 30px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   user-select: none;
@@ -3981,15 +3981,14 @@ kbd {
   cursor: pointer;
 }
 
-.annotation-review-note-edit {
-  position: relative;
+.annotation-inline-note-display,
+.annotation-inline-note-editor {
   display: block;
   width: 100%;
-  margin: 10px 0;
   padding: 9px 10px 10px;
-  color: #3a3a3c;
-  font-size: calc(13px * var(--note-font-scale, 1));
-  line-height: 1.65;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
   text-align: left;
   white-space: pre-wrap;
   background: rgba(175, 82, 222, 0.035);
@@ -3999,16 +3998,55 @@ kbd {
   transition: 150ms ease;
 }
 
-.annotation-review-note-edit:hover {
+.annotation-inline-note-display {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.annotation-history-mini-header > .annotation-history-mini-meta {
+  display: flex;
+  min-width: max-content;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.annotation-history-mini-header .annotation-history-today-count {
+  padding: 5px 8px;
+  color: #7e339f;
+  font-size: 9px;
+  font-weight: 760;
+  white-space: nowrap;
+  background: rgba(175, 82, 222, 0.08);
+  border: 1px solid rgba(175, 82, 222, 0.12);
+  border-radius: 999px;
+}
+
+.annotation-inline-note-display:hover {
   background: rgba(175, 82, 222, 0.065);
   border-color: rgba(175, 82, 222, 0.13);
 }
 
-.annotation-review-note-edit small {
-  display: block;
-  margin-top: 3px;
-  color: #9d59b8;
-  font-size: 8px;
+.annotation-inline-note-editor {
+  min-height: 72px;
+  overflow: hidden;
+  resize: none;
+  outline: none;
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 122, 255, 0.32);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.08);
+}
+
+.annotation-inline-note-placeholder {
+  color: #8e8e93;
+}
+
+.annotation-review-library-card > .annotation-inline-note-display,
+.annotation-review-library-card > .annotation-inline-note-editor {
+  margin: 10px 0;
+  font-size: calc(13px * var(--note-font-scale, 1));
+  line-height: 1.65;
 }
 
 .annotation-history-sheet.is-mini .annotation-history-tools {

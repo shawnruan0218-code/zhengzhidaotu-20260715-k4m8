@@ -7,6 +7,7 @@ export type StudyVersion = {
   notes: Record<string, string>;
   noteHighlights: Record<string, NoteHighlightRange[]>;
   noteCreatedAt: Record<string, string>;
+  annotationUpdatedAt: Record<string, string>;
   highlightHistory: string[][];
   emphasizedEntries: string[];
   reviewItems: Record<string, ReviewLibraryItem>;
@@ -64,6 +65,7 @@ export type Tombstone = {
 
 export type StoredSyncState = {
   schemaVersion: 1;
+  annotationRecordsVersion?: 1;
   tombstones: Record<string, Tombstone>;
   lastSyncAt: string | null;
   cloudCursor?: string | null;

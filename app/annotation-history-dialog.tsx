@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
+import { STORAGE_KEYS } from "./lib/app-config";
 import type { OutlineNode } from "./lib/outline-navigation";
 import type { AnnotationRecord, ReviewLibraryLevel } from "./lib/study-types";
 import {
@@ -39,7 +40,7 @@ type Props = {
   onNoteFontScaleChange: (scale: number) => void;
   onClose: () => void;
   onJump: (record: AnnotationRecord, options?: { showNote?: boolean }) => void;
-  onEdit: (record: AnnotationRecord) => void;
+  onUpdateNote: (record: AnnotationRecord, note: string) => void;
   onAddToReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
   onRemoveFromReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
   onHighlightNote: (selection: SelectedNoteText) => void;
@@ -53,6 +54,55 @@ function localDayKey(value: string) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
 
+type TodayReviewState = {
+  day: string;
+  ids: Set<string>;
+};
+
+type StoredQuickReviewActivity = {
+  schemaVersion: 1;
+  days: Record<string, string[]>;
+};
+
+function readQuickReviewActivity(): StoredQuickReviewActivity {
+  if (typeof window === "undefined") return { schemaVersion: 1, days: {} };
+  try {
+    const candidate = JSON.parse(window.localStorage.getItem(STORAGE_KEYS.quickReviewActivity) ?? "null") as Partial<StoredQuickReviewActivity> | null;
+    if (!candidate || candidate.schemaVersion !== 1 || !candidate.days || typeof candidate.days !== "object") {
+      return { schemaVersion: 1, days: {} };
+    }
+    return {
+      schemaVersion: 1,
+      days: Object.fromEntries(
+        Object.entries(candidate.days).flatMap(([day, ids]) =>
+          /^\d{4}-\d{2}-\d{2}$/.test(day) && Array.isArray(ids)
+            ? [[day, [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))]]]
+            : [],
+        ),
+      ),
+    };
+  } catch {
+    return { schemaVersion: 1, days: {} };
+  }
+}
+
+function initialTodayReviewState(): TodayReviewState {
+  const day = localDayKey(new Date().toISOString());
+  return { day, ids: new Set(readQuickReviewActivity().days[day] ?? []) };
+}
+
+function persistQuickReviewVisit(state: TodayReviewState) {
+  const stored = readQuickReviewActivity();
+  const oldestDay = localDayKey(new Date(Date.now() - 89 * 24 * 60 * 60 * 1000).toISOString());
+  const days = Object.fromEntries(Object.entries(stored.days).filter(([day]) => day >= oldestDay));
+  days[state.day] = [...state.ids];
+  try {
+    window.localStorage.setItem(STORAGE_KEYS.quickReviewActivity, JSON.stringify({ schemaVersion: 1, days } satisfies StoredQuickReviewActivity));
+  } catch {
+    // 阅读计数失败不能影响批注复习。
+  }
+}
+
 function RecordNote({ record }: { record: AnnotationRecord }) {
   return (
     <HighlightedNoteText
@@ -61,6 +111,144 @@ function RecordNote({ record }: { record: AnnotationRecord }) {
       entryId={record.entryId}
       versionId={record.versionId}
     />
+  );
+}
+
+function pointTextOffset(element: HTMLElement, clientX: number, clientY: number) {
+  const caretDocument = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const position = caretDocument.caretPositionFromPoint?.(clientX, clientY);
+  const fallbackRange = position ? null : caretDocument.caretRangeFromPoint?.(clientX, clientY);
+  const node = position?.offsetNode ?? fallbackRange?.startContainer;
+  const offset = position?.offset ?? fallbackRange?.startOffset;
+  if (!node || typeof offset !== "number" || !element.contains(node)) return element.textContent?.length ?? 0;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.setEnd(node, offset);
+  return range.toString().length;
+}
+
+function InlineNoteEditor({
+  record,
+  onSave,
+  onHighlight,
+  onRemoveHighlight,
+}: {
+  record: AnnotationRecord;
+  onSave: (record: AnnotationRecord, note: string) => void;
+  onHighlight: (selection: SelectedNoteText) => void;
+  onRemoveHighlight: (selection: SelectedNoteText) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(record.note);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resize = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.max(72, textarea.scrollHeight)}px`;
+  }, []);
+
+  const saveDraft = useCallback((value = draft) => {
+    const normalized = value.trim();
+    if (!normalized || normalized === record.note) return;
+    onSave(record, normalized);
+  }, [draft, onSave, record]);
+
+  useEffect(() => {
+    if (!editing) return;
+    resize();
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (draft.trim() && draft.trim() !== record.note) {
+      saveTimerRef.current = setTimeout(() => saveDraft(draft), 450);
+    }
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [draft, editing, record.note, resize, saveDraft]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={textareaRef}
+        className="annotation-inline-note-editor"
+        aria-label={`直接修改“${record.entryText}”的批注`}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          saveDraft();
+          setEditing(false);
+        }}
+        onKeyDown={(event) => {
+          const key = event.key.toLowerCase();
+          const textarea = event.currentTarget;
+          if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f") && textarea.selectionEnd > textarea.selectionStart) {
+            event.preventDefault();
+            event.stopPropagation();
+            const selection = {
+              entryId: record.entryId,
+              versionId: record.versionId,
+              start: textarea.selectionStart,
+              end: textarea.selectionEnd,
+              quote: draft.slice(textarea.selectionStart, textarea.selectionEnd),
+            } satisfies SelectedNoteText;
+            if (key === "d") onHighlight(selection);
+            else onRemoveHighlight(selection);
+            return;
+          }
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            saveDraft();
+            textarea.blur();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setDraft(record.note);
+            textarea.blur();
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <div
+      role="textbox"
+      tabIndex={0}
+      className="annotation-inline-note-display"
+      aria-label={`直接修改“${record.entryText}”的批注`}
+      aria-readonly="true"
+      onClick={(event) => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && event.currentTarget.contains(selection.anchorNode)) return;
+        const offset = pointTextOffset(event.currentTarget, event.clientX, event.clientY);
+        setEditing(true);
+        requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          resize();
+          textarea.focus();
+          textarea.setSelectionRange(Math.min(offset, textarea.value.length), Math.min(offset, textarea.value.length));
+        });
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== "F2") return;
+        event.preventDefault();
+        setEditing(true);
+        requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (!textarea) return;
+          resize();
+          textarea.focus();
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        });
+      }}
+    >
+      {record.note ? <RecordNote record={record} /> : <span className="annotation-inline-note-placeholder">点击这里直接输入批注…</span>}
+    </div>
   );
 }
 
@@ -73,7 +261,7 @@ export function AnnotationHistoryDialog({
   onNoteFontScaleChange,
   onClose,
   onJump,
-  onEdit,
+  onUpdateNote,
   onAddToReview,
   onRemoveFromReview,
   onHighlightNote,
@@ -91,9 +279,11 @@ export function AnnotationHistoryDialog({
   const [quickLibraryLevel, setQuickLibraryLevel] = useState<ReviewLibraryLevel>(1);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [quickIndex, setQuickIndex] = useState(0);
+  const [todayReviewState, setTodayReviewState] = useState<TodayReviewState>(initialTodayReviewState);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const quickIndexRef = useRef(0);
+  const todayReviewStateRef = useRef(todayReviewState);
   const chapterRecordsRef = useRef<HTMLElement | null>(null);
   const miniDragRef = useRef<{
     pointerId: number;
@@ -210,13 +400,26 @@ export function AnnotationHistoryDialog({
     onJump(record, { showNote });
   }, [onJump]);
 
+  const markQuickRecordViewed = useCallback((record: AnnotationRecord) => {
+    const day = localDayKey(new Date().toISOString());
+    const current = todayReviewStateRef.current;
+    const ids = current.day === day ? new Set(current.ids) : new Set<string>();
+    if (ids.has(record.id)) return;
+    ids.add(record.id);
+    const next = { day, ids };
+    todayReviewStateRef.current = next;
+    setTodayReviewState(next);
+    persistQuickReviewVisit(next);
+  }, []);
+
   const goToQuickIndex = useCallback((nextIndex: number) => {
     if (!quickRecords.length) return;
     const bounded = Math.max(0, Math.min(quickRecords.length - 1, nextIndex));
     quickIndexRef.current = bounded;
     setQuickIndex(bounded);
+    markQuickRecordViewed(quickRecords[bounded]);
     visitRecord(quickRecords[bounded], true);
-  }, [quickRecords, visitRecord]);
+  }, [markQuickRecordViewed, quickRecords, visitRecord]);
 
   const startQuickReview = (scope: QuickScope = "all", libraryLevel: ReviewLibraryLevel = selectedLibraryLevel) => {
     const scopedRecords = scope === "library"
@@ -233,6 +436,7 @@ export function AnnotationHistoryDialog({
     enterMiniMode(true);
     quickIndexRef.current = initialIndex;
     setQuickIndex(initialIndex);
+    markQuickRecordViewed(scopedRecords[initialIndex]);
     visitRecord(scopedRecords[initialIndex], true);
   };
 
@@ -255,12 +459,6 @@ export function AnnotationHistoryDialog({
       }
       if (view !== "quick" || event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
-      if (key === "e" && currentQuickRecord) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) onEdit(currentQuickRecord);
-        return;
-      }
       if (key === "1" && currentQuickRecord && targetLibraryLevel) {
         event.preventDefault();
         event.stopPropagation();
@@ -274,7 +472,7 @@ export function AnnotationHistoryDialog({
     };
     window.addEventListener("keydown", handleReviewKeys, true);
     return () => window.removeEventListener("keydown", handleReviewKeys, true);
-  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onEdit, onHighlightNote, onRemoveNoteHighlight, open, targetLibraryLevel, view]);
+  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onHighlightNote, onRemoveNoteHighlight, open, targetLibraryLevel, view]);
 
   const handleMiniPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (!miniMode || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
@@ -345,8 +543,8 @@ export function AnnotationHistoryDialog({
               <button type="button" className="annotation-history-mini-close" aria-label="关闭批注历史小窗" onClick={closeHistory}>×</button>
               {view === "calendar" && <button type="button" className={`annotation-history-mini-calendar ${miniCalendarOpen ? "is-active" : ""}`} aria-label="切换其它日期" onClick={() => setMiniCalendarOpen((current) => !current)}>日</button>}
             </div>
-            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "A / S 切换 · E 批注 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
-            <span className="annotation-history-mini-grip" aria-hidden="true">•••</span>
+            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "点击批注直接修改 · A / S 切换 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
+            <div className="annotation-history-mini-meta">{view === "quick" && <span className="annotation-history-today-count">今日共看了 {todayReviewState.ids.size.toLocaleString("zh-CN")} 条</span>}<span className="annotation-history-mini-grip" aria-hidden="true">•••</span></div>
           </header>
         ) : (
           <header className="annotation-history-header">
@@ -401,7 +599,7 @@ export function AnnotationHistoryDialog({
               {selectedLibraryRecords.map((record) => (
                 <article className="annotation-review-library-card" key={record.id}>
                   <div><button type="button" onClick={() => visitRecord(record, true)}><strong>{record.entryText}</strong><span>第 {record.page} 页 ›</span></button><button type="button" className="annotation-review-remove" onClick={() => onRemoveFromReview(record, selectedLibraryLevel)}>移出</button></div>
-                  {record.note && <button type="button" className="annotation-review-note-edit" aria-label={`修改“${record.entryText}”的批注`} onClick={() => onEdit(record)}><RecordNote record={record} /><small>点击修改</small></button>}
+                  <InlineNoteEditor key={record.id} record={record} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} />
                   <small>{record.outlinePath.map((item) => item.title).join(" › ")}</small>
                 </article>
               ))}
@@ -413,8 +611,8 @@ export function AnnotationHistoryDialog({
               {currentQuickRecord ? <>
                 <header><span>{safeQuickIndex + 1} / {quickRecords.length}</span><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
                 <div className="annotation-quick-source"><strong>{currentQuickRecord.entryText}</strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
-                <p className="annotation-quick-note"><RecordNote record={currentQuickRecord} /></p>
-                <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" onClick={() => onEdit(currentQuickRecord)}><kbd>E</kbd> 添加/编辑批注</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>
+                <div className="annotation-quick-note"><InlineNoteEditor key={currentQuickRecord.id} record={currentQuickRecord} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} /></div>
+                <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>
               </> : <p className="annotation-calendar-no-records">当前范围没有批注</p>}
             </section>
           )}

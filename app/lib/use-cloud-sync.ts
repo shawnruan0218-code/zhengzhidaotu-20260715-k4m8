@@ -15,6 +15,12 @@ import {
   scopedItemKey,
 } from "./app-config";
 import {
+  annotationSyncEntryIds,
+  applyAnnotationSyncSnapshot,
+  normalizeAnnotationUpdatedAt,
+  type AnnotationSyncSnapshot,
+} from "./annotation-sync";
+import {
   clearCloudflareSession,
   cloudflareLoginUrl,
   cloudflareRequest,
@@ -76,6 +82,7 @@ const PUSH_BATCH_SIZE = 25;
 function emptySyncState(): StoredSyncState {
   return {
     schemaVersion: 1,
+    annotationRecordsVersion: 1,
     tombstones: {},
     lastSyncAt: null,
     cloudCursor: null,
@@ -111,10 +118,13 @@ function readSyncState(): StoredSyncState {
       : {};
     return {
       schemaVersion: 1,
+      annotationRecordsVersion: 1,
       tombstones,
       lastSyncAt: typeof parsed.lastSyncAt === "string" ? parsed.lastSyncAt : null,
-      cloudCursor: typeof parsed.cloudCursor === "string" ? parsed.cloudCursor : null,
-      syncedRecordVersions,
+      cloudCursor: parsed.annotationRecordsVersion === 1 && typeof parsed.cloudCursor === "string"
+        ? parsed.cloudCursor
+        : null,
+      syncedRecordVersions: parsed.annotationRecordsVersion === 1 ? syncedRecordVersions : {},
     };
   } catch {
     return emptySyncState();
@@ -132,6 +142,7 @@ function writeSyncState(
       STORAGE_KEYS.syncState,
       JSON.stringify({
         schemaVersion: 1,
+        annotationRecordsVersion: 1,
         tombstones,
         lastSyncAt,
         cloudCursor,
@@ -153,6 +164,29 @@ function versionRecord(userId: string, version: StudyVersion): SyncRecord {
     item_data: version as unknown as Record<string, unknown>,
     added_at: new Date(version.createdAt || 0).toISOString(),
     updated_at: version.updatedAt || EPOCH_TIMESTAMP,
+    deleted_at: null,
+  };
+}
+
+function annotationRecord(userId: string, version: StudyVersion, entryId: string): SyncRecord {
+  const itemKey = scopedItemKey(
+    `annotation:${encodeURIComponent(version.id)}:${encodeURIComponent(entryId)}`,
+  );
+  const updatedAt = version.annotationUpdatedAt[entryId] ?? version.updatedAt;
+  return {
+    id: `${userId}::${itemKey}`,
+    user_id: userId,
+    item_key: itemKey,
+    item_type: "annotation",
+    item_data: {
+      versionId: version.id,
+      entryId,
+      note: version.notes[entryId] ?? "",
+      noteHighlights: version.noteHighlights[entryId] ?? [],
+      noteCreatedAt: version.noteCreatedAt[entryId] ?? null,
+    },
+    added_at: version.noteCreatedAt[entryId] ?? new Date(version.createdAt || 0).toISOString(),
+    updated_at: updatedAt,
     deleted_at: null,
   };
 }
@@ -193,6 +227,9 @@ function buildLocalRecords(
 ): SyncRecord[] {
   const records = [
     ...versions.map((version) => versionRecord(userId, version)),
+    ...versions.flatMap((version) =>
+      annotationSyncEntryIds(version).map((entryId) => annotationRecord(userId, version, entryId)),
+    ),
     activeVersionRecord(userId, activeVersionId, activeVersionUpdatedAt),
   ];
   const byKey = new Map(records.map((record) => [record.item_key, record]));
@@ -248,6 +285,12 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
     notes,
     noteHighlights,
     noteCreatedAt,
+    annotationUpdatedAt: normalizeAnnotationUpdatedAt(
+      value.annotationUpdatedAt,
+      notes,
+      noteCreatedAt,
+      updatedAt,
+    ),
     highlightHistory: Array.isArray(value.highlightHistory)
       ? value.highlightHistory
           .filter((batch): batch is string[] => Array.isArray(batch))
@@ -258,6 +301,40 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
       ? value.emphasizedEntries.filter((id): id is string => typeof id === "string")
       : [],
     reviewItems,
+  };
+}
+
+function normalizeRemoteAnnotation(record: SyncRecord): AnnotationSyncSnapshot | null {
+  if (record.item_type !== "annotation" || record.deleted_at) return null;
+  const value = record.item_data;
+  if (
+    typeof value.versionId !== "string" ||
+    !value.versionId.startsWith(VERSION_ID_PREFIX) ||
+    typeof value.entryId !== "string" ||
+    !value.entryId ||
+    typeof value.note !== "string"
+  ) return null;
+  const noteHighlights = Array.isArray(value.noteHighlights)
+    ? value.noteHighlights.flatMap((range) => {
+        if (!range || typeof range !== "object") return [];
+        const item = range as Partial<NoteHighlightRange>;
+        return typeof item.start === "number" &&
+          typeof item.end === "number" &&
+          typeof item.quote === "string" &&
+          item.end > item.start
+          ? [{ start: item.start, end: item.end, quote: item.quote }]
+          : [];
+      })
+    : [];
+  return {
+    versionId: value.versionId,
+    entryId: value.entryId,
+    note: value.note,
+    noteHighlights,
+    noteCreatedAt: typeof value.noteCreatedAt === "string" && !Number.isNaN(Date.parse(value.noteCreatedAt))
+      ? value.noteCreatedAt
+      : null,
+    updatedAt: record.updated_at,
   };
 }
 
@@ -375,6 +452,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
 
   const applyMergedRecords = useCallback((records: SyncRecord[]) => {
     const nextVersions: StudyVersion[] = [];
+    const annotationSnapshots: AnnotationSyncSnapshot[] = [];
     const nextTombstones: Record<string, Tombstone> = {};
     const versionItemPrefix = scopedItemKey("version:");
     let activeRecord: SyncRecord | null = null;
@@ -388,11 +466,14 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
       } else if (record.item_type === "study_version") {
         const version = normalizeRemoteVersion(record.item_data, record.updated_at);
         if (version) nextVersions.push(version);
+      } else if (record.item_type === "annotation") {
+        const annotation = normalizeRemoteAnnotation(record);
+        if (annotation) annotationSnapshots.push(annotation);
       } else if (record.item_type === "active_version") {
         activeRecord = record;
       }
     }
-    if (!nextVersions.length) return;
+    if (!nextVersions.length && !annotationSnapshots.length) return;
     const reconciledTombstones = { ...nextTombstones };
     for (const [itemKey, local] of Object.entries(tombstonesRef.current)) {
       const remote = reconciledTombstones[itemKey];
@@ -408,19 +489,35 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     );
     tombstonesRef.current = reconciledTombstones;
     latestInputs.current.setVersions((current) => {
-      const reconciled = reconcileVersionSnapshots(current, nextVersions, deletedVersionUpdates);
+      let reconciled = nextVersions.length
+        ? reconcileVersionSnapshots(current, nextVersions, deletedVersionUpdates)
+        : current;
+      if (annotationSnapshots.length) {
+        const snapshotsByVersion = new Map<string, AnnotationSyncSnapshot[]>();
+        annotationSnapshots.forEach((snapshot) => {
+          snapshotsByVersion.set(snapshot.versionId, [
+            ...(snapshotsByVersion.get(snapshot.versionId) ?? []),
+            snapshot,
+          ]);
+        });
+        reconciled = reconciled.map((version) =>
+          (snapshotsByVersion.get(version.id) ?? []).reduce(applyAnnotationSyncSnapshot, version),
+        );
+      }
       return JSON.stringify(current) === JSON.stringify(reconciled) ? current : reconciled;
     });
     const requestedActive = activeRecord && typeof activeRecord.item_data.activeVersionId === "string"
       ? activeRecord.item_data.activeVersionId
       : "";
-    const activeId = nextVersions.some((version) => version.id === requestedActive)
-      ? requestedActive
-      : nextVersions[0].id;
-    const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
-    latestInputs.current.setActiveVersionId((current) => current === activeId ? current : activeId);
-    latestInputs.current.setActiveVersionUpdatedAt((current) =>
-      current === activeUpdatedAt ? current : activeUpdatedAt);
+    if (nextVersions.length) {
+      const activeId = nextVersions.some((version) => version.id === requestedActive)
+        ? requestedActive
+        : nextVersions[0].id;
+      const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
+      latestInputs.current.setActiveVersionId((current) => current === activeId ? current : activeId);
+      latestInputs.current.setActiveVersionUpdatedAt((current) =>
+        current === activeUpdatedAt ? current : activeUpdatedAt);
+    }
   }, []);
 
   const performSync = useCallback(async () => {

@@ -19,6 +19,7 @@ import {
 import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
+import { normalizeAnnotationUpdatedAt } from "./lib/annotation-sync";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
 import { removeNoteHighlightSelection } from "./lib/note-highlights";
 import {
@@ -237,21 +238,28 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
         )
       : {};
   const reviewItems = normalizeReviewItems(candidate.reviewItems);
+  const updatedAt =
+    typeof candidate.updatedAt === "string" && !Number.isNaN(Date.parse(candidate.updatedAt))
+      ? candidate.updatedAt
+      : INITIAL_UPDATED_AT;
 
   return {
     id: candidate.id,
     name: candidate.name.trim() || "未命名版本",
     createdAt: typeof candidate.createdAt === "number" ? candidate.createdAt : Date.now(),
-    updatedAt:
-      typeof candidate.updatedAt === "string" && !Number.isNaN(Date.parse(candidate.updatedAt))
-        ? candidate.updatedAt
-        : INITIAL_UPDATED_AT,
+    updatedAt,
     highlights: Array.isArray(candidate.highlights)
       ? candidate.highlights.filter((id): id is string => typeof id === "string")
       : [],
     notes,
     noteHighlights,
     noteCreatedAt,
+    annotationUpdatedAt: normalizeAnnotationUpdatedAt(
+      candidate.annotationUpdatedAt,
+      notes,
+      noteCreatedAt,
+      updatedAt,
+    ),
     highlightHistory: Array.isArray(candidate.highlightHistory)
       ? candidate.highlightHistory
           .filter((batch): batch is string[] => Array.isArray(batch))
@@ -820,7 +828,7 @@ export function StudyReader() {
   const [batchKnowledgeSearchOpen, setBatchKnowledgeSearchOpen] = useState(false);
   const [annotationHistoryOpen, setAnnotationHistoryOpen] = useState(false);
   const [annotationHistoryMiniBounds, setAnnotationHistoryMiniBounds] =
-    useState<MiniReviewBounds | null>(null);
+    useState<(MiniReviewBounds & { viewerLeft: number }) | null>(null);
   const [knowledgeLocator, setKnowledgeLocator] = useState<
     (KnowledgeEntry & { animationId: number }) | null
   >(null);
@@ -873,6 +881,14 @@ export function StudyReader() {
   const pendingClipboardText = useRef<string | null>(null);
   const clipboardWriteInFlight = useRef(false);
   const panKeyHeldRef = useRef(false);
+  const handleAnnotationHistoryMiniBounds = useCallback((bounds: MiniReviewBounds | null) => {
+    if (!bounds) {
+      setAnnotationHistoryMiniBounds(null);
+      return;
+    }
+    const viewerLeft = Math.max(0, viewerRef.current?.getBoundingClientRect().left ?? 0);
+    setAnnotationHistoryMiniBounds({ ...bounds, viewerLeft });
+  }, []);
   const pagePanDrag = useRef<{
     pointerId: number;
     startClientX: number;
@@ -1033,6 +1049,7 @@ export function StudyReader() {
           notes: {},
           noteHighlights: {},
           noteCreatedAt: {},
+          annotationUpdatedAt: {},
           highlightHistory: [],
           emphasizedEntries: [],
           reviewItems: {},
@@ -1224,6 +1241,7 @@ export function StudyReader() {
       notes: {},
       noteHighlights: {},
       noteCreatedAt: {},
+      annotationUpdatedAt: {},
       highlightHistory: [],
       emphasizedEntries: [],
       reviewItems: {},
@@ -1408,6 +1426,9 @@ export function StudyReader() {
     const savedAt = new Date().toISOString();
     updateActiveVersion((version) => {
       const alreadyExists = Boolean(version.notes[activeEntryId]);
+      const annotationUpdatedAt = nextIsoTimestamp(
+        version.annotationUpdatedAt[activeEntryId] ?? version.updatedAt,
+      );
       return {
         ...version,
         notes: { ...version.notes, [activeEntryId]: noteDraft.trim() },
@@ -1415,6 +1436,10 @@ export function StudyReader() {
           alreadyExists || version.noteCreatedAt[activeEntryId]
             ? version.noteCreatedAt
             : { ...version.noteCreatedAt, [activeEntryId]: savedAt },
+        annotationUpdatedAt: {
+          ...version.annotationUpdatedAt,
+          [activeEntryId]: annotationUpdatedAt,
+        },
       };
     });
     closeAnnotation();
@@ -1424,6 +1449,9 @@ export function StudyReader() {
   const deleteAnnotation = useCallback(() => {
     if (!activeEntryId) return;
     updateActiveVersion((version) => {
+      const annotationUpdatedAt = nextIsoTimestamp(
+        version.annotationUpdatedAt[activeEntryId] ?? version.updatedAt,
+      );
       const nextNotes = { ...version.notes };
       const nextNoteCreatedAt = { ...version.noteCreatedAt };
       const nextNoteHighlights = { ...version.noteHighlights };
@@ -1435,6 +1463,10 @@ export function StudyReader() {
         notes: nextNotes,
         noteCreatedAt: nextNoteCreatedAt,
         noteHighlights: nextNoteHighlights,
+        annotationUpdatedAt: {
+          ...version.annotationUpdatedAt,
+          [activeEntryId]: annotationUpdatedAt,
+        },
       };
     });
     setFloatingNoteEntryId(null);
@@ -1457,6 +1489,9 @@ export function StudyReader() {
           ) {
             return version;
           }
+          const updatedAt = nextIsoTimestamp(
+            version.annotationUpdatedAt[selection.entryId] ?? version.updatedAt,
+          );
           return {
             ...version,
             noteHighlights: {
@@ -1470,7 +1505,11 @@ export function StudyReader() {
                 },
               ],
             },
-            updatedAt: nextIsoTimestamp(version.updatedAt),
+            annotationUpdatedAt: {
+              ...version.annotationUpdatedAt,
+              [selection.entryId]: updatedAt,
+            },
+            updatedAt,
           };
         }),
       );
@@ -1504,10 +1543,17 @@ export function StudyReader() {
           const nextNoteHighlights = { ...version.noteHighlights };
           if (result.ranges.length) nextNoteHighlights[selection.entryId] = result.ranges;
           else delete nextNoteHighlights[selection.entryId];
+          const updatedAt = nextIsoTimestamp(
+            version.annotationUpdatedAt[selection.entryId] ?? version.updatedAt,
+          );
           return {
             ...version,
             noteHighlights: nextNoteHighlights,
-            updatedAt: nextIsoTimestamp(version.updatedAt),
+            annotationUpdatedAt: {
+              ...version.annotationUpdatedAt,
+              [selection.entryId]: updatedAt,
+            },
+            updatedAt,
           };
         }),
       );
@@ -1614,19 +1660,43 @@ export function StudyReader() {
     ],
   );
 
-  const editAnnotationRecord = useCallback(
-    (record: AnnotationRecord) => {
-      const entry = entriesById.get(record.entryId);
-      if (!entry) {
-        showToast("当前条目的文字数据尚未加载");
-        return;
-      }
-      if (record.versionId !== activeVersionId) selectVersion(record.versionId);
+  const updateAnnotationRecord = useCallback(
+    (record: AnnotationRecord, note: string) => {
+      const normalized = note.trim();
+      if (!normalized) return;
+      const savedAt = new Date().toISOString();
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== record.versionId || version.notes[record.entryId] === normalized) return version;
+          const nextRanges = (version.noteHighlights[record.entryId] ?? []).flatMap((range) => {
+            if (!range.quote) return [];
+            const start = normalized.indexOf(range.quote);
+            return start >= 0 ? [{ start, end: start + range.quote.length, quote: range.quote }] : [];
+          });
+          const nextNoteHighlights = { ...version.noteHighlights };
+          if (nextRanges.length) nextNoteHighlights[record.entryId] = nextRanges;
+          else delete nextNoteHighlights[record.entryId];
+          const updatedAt = nextIsoTimestamp(
+            version.annotationUpdatedAt[record.entryId] ?? version.updatedAt,
+          );
+          return {
+            ...version,
+            notes: { ...version.notes, [record.entryId]: normalized },
+            noteHighlights: nextNoteHighlights,
+            noteCreatedAt: version.noteCreatedAt[record.entryId]
+              ? version.noteCreatedAt
+              : { ...version.noteCreatedAt, [record.entryId]: savedAt },
+            annotationUpdatedAt: {
+              ...version.annotationUpdatedAt,
+              [record.entryId]: updatedAt,
+            },
+            updatedAt,
+          };
+        }),
+      );
       setFloatingNoteEntryId(record.entryId);
-      setActiveEntryId(record.entryId);
-      setNoteDraft(record.note);
     },
-    [activeVersionId, entriesById, selectVersion, showToast],
+    [],
   );
 
   const addAnnotationToReview = useCallback(
@@ -1677,8 +1747,10 @@ export function StudyReader() {
     if (!pendingAnnotationJump) return;
     const entry = entriesById.get(pendingAnnotationJump.entryId);
     if (!entry) return;
-    setPendingAnnotationJump(null);
-    revealAnnotationEntry(entry);
+    queueMicrotask(() => {
+      revealAnnotationEntry(entry);
+      setPendingAnnotationJump(null);
+    });
   }, [entriesById, pendingAnnotationJump, revealAnnotationEntry]);
 
   const locateKnowledgeEntry = useCallback(
@@ -2699,9 +2771,7 @@ export function StudyReader() {
   const naturalDockedNoteWidth = dockedNoteText
     ? Math.min(760, Math.max(340, 300 + Math.sqrt(dockedNoteText.length) * 28))
     : 0;
-  const viewerLeft = annotationHistoryMiniBounds
-    ? Math.max(0, viewerRef.current?.getBoundingClientRect().left ?? 0)
-    : 0;
+  const viewerLeft = annotationHistoryMiniBounds?.viewerLeft ?? 0;
   const dockedNoteWidth = annotationHistoryMiniBounds
     ? Math.min(
         naturalDockedNoteWidth,
@@ -2724,14 +2794,16 @@ export function StudyReader() {
   useEffect(() => {
     dockedNoteManuallyPositioned.current = false;
     dockedNoteDrag.current = null;
-    setIsDockedNoteDragging(false);
-    setDockedNotePosition(null);
+    queueMicrotask(() => {
+      setIsDockedNoteDragging(false);
+      setDockedNotePosition(null);
+    });
   }, [floatingNoteEntryId]);
 
   useEffect(() => {
     if (!annotationLocator) return;
     dockedNoteManuallyPositioned.current = false;
-    setDockedNotePosition(null);
+    queueMicrotask(() => setDockedNotePosition(null));
   }, [annotationLocator?.animationId]);
 
   useEffect(() => {
@@ -2744,7 +2816,18 @@ export function StudyReader() {
       if (!note) return;
       const noteRect = note.getBoundingClientRect();
       const locator = document.querySelector<HTMLElement>(".annotation-locator");
-      const locatorRect = locator?.getBoundingClientRect() ?? null;
+      const persistentTargetRect = (() => {
+        if (!floatingNoteEntry) return null;
+        const sheet = pageRefs.current[floatingNoteEntry.page]?.querySelector<HTMLElement>(".page-sheet");
+        if (!sheet) return null;
+        const sheetRect = sheet.getBoundingClientRect();
+        const left = sheetRect.left + sheetRect.width * Math.max(0, floatingNoteEntry.x - 0.003);
+        const top = sheetRect.top + sheetRect.height * Math.max(0, floatingNoteEntry.y - 0.004);
+        const width = sheetRect.width * Math.min(1 - floatingNoteEntry.x, floatingNoteEntry.width + 0.006);
+        const height = sheetRect.height * Math.min(1 - floatingNoteEntry.y, floatingNoteEntry.height + 0.008);
+        return { left, top, right: left + width, bottom: top + height };
+      })();
+      const locatorRect = locator?.getBoundingClientRect() ?? persistentTargetRect;
       const edge = 18;
       const gap = 30;
       const maximumLeft = Math.max(edge, window.innerWidth - noteRect.width - edge);
@@ -2782,9 +2865,14 @@ export function StudyReader() {
 
     frame = requestAnimationFrame(placeNote);
     [180, 420, 760].forEach((delay) => timers.push(setTimeout(placeNote, delay)));
+    const viewer = viewerRef.current;
+    window.addEventListener("resize", placeNote);
+    viewer?.addEventListener("scroll", placeNote, { passive: true });
     return () => {
       cancelAnimationFrame(frame);
       timers.forEach(clearTimeout);
+      window.removeEventListener("resize", placeNote);
+      viewer?.removeEventListener("scroll", placeNote);
     };
   }, [
     annotationHistoryMiniBounds,
@@ -2792,6 +2880,7 @@ export function StudyReader() {
     dockedNoteLeft,
     dockedNoteText,
     dockedNoteWidth,
+    floatingNoteEntry,
     noteFontScale,
     showDockedHistoryNote,
   ]);
@@ -3244,12 +3333,12 @@ export function StudyReader() {
         reviewRecordsByLevel={reviewRecordsByLevel}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
-        onEdit={editAnnotationRecord}
+        onUpdateNote={updateAnnotationRecord}
         onAddToReview={addAnnotationToReview}
         onRemoveFromReview={removeAnnotationFromReview}
         onHighlightNote={addNoteTextHighlight}
         onRemoveNoteHighlight={removeSelectedNoteTextHighlight}
-        onMiniBoundsChange={setAnnotationHistoryMiniBounds}
+        onMiniBoundsChange={handleAnnotationHistoryMiniBounds}
         noteFontScale={noteFontScale}
         onNoteFontScaleChange={setNoteFontScale}
         outline={OUTLINE}
