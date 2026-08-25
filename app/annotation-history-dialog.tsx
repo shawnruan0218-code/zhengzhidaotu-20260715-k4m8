@@ -12,6 +12,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnnotationCalendar } from "./annotation-calendar";
+import {
+  HighlightedEntryText,
+  readSelectedEntryText,
+  type SelectedEntryText,
+} from "./entry-highlight-text";
 import { STORAGE_KEYS } from "./lib/app-config";
 import { shortcutKey } from "./lib/keyboard-shortcuts";
 import type { OutlineNode } from "./lib/outline-navigation";
@@ -46,6 +51,8 @@ type Props = {
   onRemoveFromReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
   onHighlightNote: (selection: SelectedNoteText) => void;
   onRemoveNoteHighlight: (selection: SelectedNoteText) => void;
+  onHighlightEntryText: (selection: SelectedEntryText) => void;
+  onRemoveEntryTextHighlight: (selection: SelectedEntryText) => void;
   onMiniBoundsChange: (bounds: MiniReviewBounds | null) => void;
 };
 
@@ -282,6 +289,8 @@ export function AnnotationHistoryDialog({
   onRemoveFromReview,
   onHighlightNote,
   onRemoveNoteHighlight,
+  onHighlightEntryText,
+  onRemoveEntryTextHighlight,
   onMiniBoundsChange,
 }: Props) {
   const [showReturnToTop, setShowReturnToTop] = useState(false);
@@ -464,12 +473,29 @@ export function AnnotationHistoryDialog({
 
       const selectionKey = shortcutKey(event);
       if (!event.metaKey && !event.ctrlKey && !event.altKey && (selectionKey === "d" || selectionKey === "f")) {
-        const selection = readSelectedNoteText();
-        if (selection) {
+        const liveSelection = window.getSelection();
+        const liveElement = liveSelection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+          ? liveSelection.anchorNode as Element
+          : liveSelection?.anchorNode?.parentElement;
+        const isEntryTextSelection = Boolean(
+          liveSelection &&
+          !liveSelection.isCollapsed &&
+          liveElement?.closest("[data-entry-highlight-root='true']"),
+        );
+        const entrySelection = isEntryTextSelection ? readSelectedEntryText() : null;
+        if (entrySelection) {
           event.preventDefault();
           event.stopPropagation();
-          if (selectionKey === "d") onHighlightNote(selection);
-          else onRemoveNoteHighlight(selection);
+          if (selectionKey === "d") onHighlightEntryText(entrySelection);
+          else onRemoveEntryTextHighlight(entrySelection);
+          return;
+        }
+        const noteSelection = readSelectedNoteText();
+        if (noteSelection) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (selectionKey === "d") onHighlightNote(noteSelection);
+          else onRemoveNoteHighlight(noteSelection);
         }
         return;
       }
@@ -488,7 +514,7 @@ export function AnnotationHistoryDialog({
     };
     window.addEventListener("keydown", handleReviewKeys, true);
     return () => window.removeEventListener("keydown", handleReviewKeys, true);
-  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onHighlightNote, onRemoveNoteHighlight, open, targetLibraryLevel, view]);
+  }, [currentQuickRecord, goToQuickIndex, onAddToReview, onHighlightEntryText, onHighlightNote, onRemoveEntryTextHighlight, onRemoveNoteHighlight, open, targetLibraryLevel, view]);
 
   const handleMiniPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (!miniMode || event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
@@ -559,12 +585,12 @@ export function AnnotationHistoryDialog({
               <button type="button" className="annotation-history-mini-close" aria-label="关闭批注历史小窗" onClick={closeHistory}>×</button>
               {view === "calendar" && <button type="button" className={`annotation-history-mini-calendar ${miniCalendarOpen ? "is-active" : ""}`} aria-label="切换其它日期" onClick={() => setMiniCalendarOpen((current) => !current)}>日</button>}
             </div>
-            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "点击批注直接修改 · A / S 切换 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
+            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "划选原文或批注按 D 高亮 · A / S 切换 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
             <div className="annotation-history-mini-meta">{view === "quick" && <span className="annotation-history-today-count">今日共看了 {todayReviewState.ids.size.toLocaleString("zh-CN")} 条</span>}<span className="annotation-history-mini-grip" aria-hidden="true">•••</span></div>
           </header>
         ) : (
           <header className="annotation-history-header">
-            <div className="annotation-history-heading"><span>批注历史 · 多模式复习</span><h2 id="annotation-history-title">我的批注</h2><p>快速复习按 A / S 切换；划选批注文字后按 D 高亮、按 F 取消高亮。</p></div>
+            <div className="annotation-history-heading"><span>批注历史 · 多模式复习</span><h2 id="annotation-history-title">我的批注</h2><p>快速复习按 A / S 切换；划选原文或批注后按 D 高亮、按 F 取消高亮。</p></div>
             <div className="annotation-history-summary" aria-label="批注历史统计">
               <div><strong>{records.length.toLocaleString("zh-CN")}</strong><span>条批注</span></div>
               <div><strong>{datedDayCount.toLocaleString("zh-CN")}</strong><span>个记录日</span></div>
@@ -626,7 +652,7 @@ export function AnnotationHistoryDialog({
             <section className="annotation-quick-review" aria-live="polite">
               {currentQuickRecord ? <>
                 <header><span>{safeQuickIndex + 1} / {quickRecords.length}</span><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
-                <div className="annotation-quick-source"><strong>{currentQuickRecord.entryText}</strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
+                <div className="annotation-quick-source"><strong><HighlightedEntryText text={currentQuickRecord.entryText} ranges={currentQuickRecord.entryTextHighlights} entryId={currentQuickRecord.entryId} versionId={currentQuickRecord.versionId} /></strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
                 <div className="annotation-quick-note"><InlineNoteEditor key={currentQuickRecord.id} record={currentQuickRecord} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} /></div>
                 <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>
               </> : <p className="annotation-calendar-no-records">当前范围没有批注</p>}

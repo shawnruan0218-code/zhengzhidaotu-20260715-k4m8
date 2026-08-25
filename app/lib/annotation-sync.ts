@@ -5,6 +5,7 @@ export type AnnotationSyncSnapshot = {
   entryId: string;
   note: string;
   noteHighlights: NoteHighlightRange[];
+  entryTextHighlights: NoteHighlightRange[];
   noteCreatedAt: string | null;
   updatedAt: string;
 };
@@ -18,6 +19,7 @@ export function normalizeAnnotationUpdatedAt(
   notes: Record<string, string>,
   noteCreatedAt: Record<string, string>,
   fallback: string,
+  entryTextHighlights: Record<string, NoteHighlightRange[]> = {},
 ): Record<string, string> {
   const normalized = value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(
@@ -25,7 +27,7 @@ export function normalizeAnnotationUpdatedAt(
           Boolean(entry[0]) && validTimestamp(entry[1])),
       )
     : {};
-  for (const entryId of Object.keys(notes)) {
+  for (const entryId of new Set([...Object.keys(notes), ...Object.keys(entryTextHighlights)])) {
     if (!normalized[entryId]) normalized[entryId] = noteCreatedAt[entryId] ?? fallback;
   }
   return normalized;
@@ -34,6 +36,7 @@ export function normalizeAnnotationUpdatedAt(
 export function annotationSyncEntryIds(version: StudyVersion): string[] {
   return [...new Set([
     ...Object.keys(version.notes),
+    ...Object.keys(version.entryTextHighlights),
     ...Object.keys(version.annotationUpdatedAt),
   ])].sort();
 }
@@ -48,6 +51,7 @@ export function applyAnnotationSyncSnapshot(
 
   const notes = { ...version.notes };
   const noteHighlights = { ...version.noteHighlights };
+  const entryTextHighlights = { ...version.entryTextHighlights };
   const noteCreatedAt = { ...version.noteCreatedAt };
   if (snapshot.note) {
     notes[snapshot.entryId] = snapshot.note;
@@ -59,11 +63,17 @@ export function applyAnnotationSyncSnapshot(
     delete noteHighlights[snapshot.entryId];
     delete noteCreatedAt[snapshot.entryId];
   }
+  if (snapshot.entryTextHighlights.length) {
+    entryTextHighlights[snapshot.entryId] = snapshot.entryTextHighlights;
+  } else {
+    delete entryTextHighlights[snapshot.entryId];
+  }
 
   return {
     ...version,
     notes,
     noteHighlights,
+    entryTextHighlights,
     noteCreatedAt,
     annotationUpdatedAt: {
       ...version.annotationUpdatedAt,

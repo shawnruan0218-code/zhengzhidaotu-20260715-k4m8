@@ -6,6 +6,7 @@ export type StudyVersion = {
   highlights: string[];
   notes: Record<string, string>;
   noteHighlights: Record<string, NoteHighlightRange[]>;
+  entryTextHighlights: Record<string, NoteHighlightRange[]>;
   noteCreatedAt: Record<string, string>;
   annotationUpdatedAt: Record<string, string>;
   highlightHistory: string[][];
@@ -41,6 +42,7 @@ export type AnnotationRecord = {
   entryText: string;
   note: string;
   noteHighlights: NoteHighlightRange[];
+  entryTextHighlights: NoteHighlightRange[];
   entryY: number;
   outlinePath: Array<{ id: string; title: string; level: number }>;
   createdAt: string | null;

@@ -3816,6 +3816,19 @@ kbd {
   line-height: 1.5;
 }
 
+.entry-highlight-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.entry-highlight-text mark {
+  color: inherit;
+  background: #ffe27a;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 .annotation-quick-source button {
   width: auto;
 }

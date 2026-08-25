@@ -17,6 +17,10 @@ import {
   type MiniReviewBounds,
 } from "./annotation-history-dialog";
 import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
+import {
+  clearRememberedEntryText,
+  type SelectedEntryText,
+} from "./entry-highlight-text";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
 import { normalizeAnnotationUpdatedAt } from "./lib/annotation-sync";
@@ -239,6 +243,28 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
           }),
         )
       : {};
+  const entryTextHighlights =
+    candidate.entryTextHighlights &&
+    typeof candidate.entryTextHighlights === "object" &&
+    !Array.isArray(candidate.entryTextHighlights)
+      ? Object.fromEntries(
+          Object.entries(candidate.entryTextHighlights).flatMap(([entryId, ranges]) => {
+            if (!Array.isArray(ranges)) return [];
+            const normalized = ranges.flatMap((range) => {
+              if (!range || typeof range !== "object") return [];
+              const item = range as Partial<NoteHighlightRange>;
+              if (
+                typeof item.start !== "number" ||
+                typeof item.end !== "number" ||
+                typeof item.quote !== "string" ||
+                item.end <= item.start
+              ) return [];
+              return [{ start: item.start, end: item.end, quote: item.quote }];
+            });
+            return normalized.length ? [[entryId, normalized]] : [];
+          }),
+        )
+      : {};
   const reviewItems = normalizeReviewItems(candidate.reviewItems);
   const updatedAt =
     typeof candidate.updatedAt === "string" && !Number.isNaN(Date.parse(candidate.updatedAt))
@@ -255,12 +281,14 @@ function normalizeStoredVersion(value: unknown): StudyVersion | null {
       : [],
     notes,
     noteHighlights,
+    entryTextHighlights,
     noteCreatedAt,
     annotationUpdatedAt: normalizeAnnotationUpdatedAt(
       candidate.annotationUpdatedAt,
       notes,
       noteCreatedAt,
       updatedAt,
+      entryTextHighlights,
     ),
     highlightHistory: Array.isArray(candidate.highlightHistory)
       ? candidate.highlightHistory
@@ -1050,6 +1078,7 @@ export function StudyReader() {
           highlights: [],
           notes: {},
           noteHighlights: {},
+          entryTextHighlights: {},
           noteCreatedAt: {},
           annotationUpdatedAt: {},
           highlightHistory: [],
@@ -1242,6 +1271,7 @@ export function StudyReader() {
       highlights: [],
       notes: {},
       noteHighlights: {},
+      entryTextHighlights: {},
       noteCreatedAt: {},
       annotationUpdatedAt: {},
       highlightHistory: [],
@@ -1563,6 +1593,88 @@ export function StudyReader() {
       window.getSelection()?.removeAllRanges();
       clearRememberedNoteText();
       showToast(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
+    },
+    [showToast, versions],
+  );
+
+  const addEntryTextHighlight = useCallback(
+    (selection: SelectedEntryText) => {
+      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const changed = Boolean(selectedVersion) && !(selectedVersion?.entryTextHighlights[selection.entryId] ?? [])
+        .some((range) => range.start === selection.start && range.end === selection.end);
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== selection.versionId) return version;
+          const existing = version.entryTextHighlights[selection.entryId] ?? [];
+          if (existing.some((range) => range.start === selection.start && range.end === selection.end)) {
+            return version;
+          }
+          const updatedAt = nextIsoTimestamp(
+            version.annotationUpdatedAt[selection.entryId] ?? version.updatedAt,
+          );
+          return {
+            ...version,
+            entryTextHighlights: {
+              ...version.entryTextHighlights,
+              [selection.entryId]: [
+                ...existing,
+                { start: selection.start, end: selection.end, quote: selection.quote },
+              ],
+            },
+            annotationUpdatedAt: {
+              ...version.annotationUpdatedAt,
+              [selection.entryId]: updatedAt,
+            },
+            updatedAt,
+          };
+        }),
+      );
+      window.getSelection()?.removeAllRanges();
+      clearRememberedEntryText();
+      showToast(changed ? "已高亮快速复习词条中的选中文字" : "这段文字已经高亮");
+    },
+    [showToast, versions],
+  );
+
+  const removeSelectedEntryTextHighlight = useCallback(
+    (selection: SelectedEntryText) => {
+      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const preview = selectedVersion
+        ? removeNoteHighlightSelection(
+            selection.text,
+            selectedVersion.entryTextHighlights[selection.entryId] ?? [],
+            selection,
+          )
+        : null;
+      setVersions((current) =>
+        current.map((version) => {
+          if (version.id !== selection.versionId) return version;
+          const result = removeNoteHighlightSelection(
+            selection.text,
+            version.entryTextHighlights[selection.entryId] ?? [],
+            selection,
+          );
+          if (!result.changed) return version;
+          const nextEntryTextHighlights = { ...version.entryTextHighlights };
+          if (result.ranges.length) nextEntryTextHighlights[selection.entryId] = result.ranges;
+          else delete nextEntryTextHighlights[selection.entryId];
+          const updatedAt = nextIsoTimestamp(
+            version.annotationUpdatedAt[selection.entryId] ?? version.updatedAt,
+          );
+          return {
+            ...version,
+            entryTextHighlights: nextEntryTextHighlights,
+            annotationUpdatedAt: {
+              ...version.annotationUpdatedAt,
+              [selection.entryId]: updatedAt,
+            },
+            updatedAt,
+          };
+        }),
+      );
+      window.getSelection()?.removeAllRanges();
+      clearRememberedEntryText();
+      showToast(preview?.changed ? "已取消快速复习词条中的选中文字高亮" : "选中文字没有高亮");
     },
     [showToast, versions],
   );
@@ -2731,6 +2843,7 @@ export function StudyReader() {
               entryText: entry?.text.trim() || `第 ${page} 页批注条目`,
               note,
               noteHighlights: version.noteHighlights[entryId] ?? [],
+              entryTextHighlights: version.entryTextHighlights[entryId] ?? [],
               entryY: entry?.y ?? 0,
               outlinePath: outlinePathForLocation(OUTLINE, page, entry?.y ?? 0),
               createdAt: version.noteCreatedAt[entryId] ?? null,
@@ -2760,6 +2873,7 @@ export function StudyReader() {
                 entryText: entry?.text.trim() || item.entryText,
                 note: version.notes[item.entryId] ?? "",
                 noteHighlights: version.noteHighlights[item.entryId] ?? [],
+                entryTextHighlights: version.entryTextHighlights[item.entryId] ?? [],
                 entryY: entry?.y ?? item.entryY,
                 outlinePath: outlinePathForLocation(
                   OUTLINE,
@@ -3353,6 +3467,8 @@ export function StudyReader() {
         onRemoveFromReview={removeAnnotationFromReview}
         onHighlightNote={addNoteTextHighlight}
         onRemoveNoteHighlight={removeSelectedNoteTextHighlight}
+        onHighlightEntryText={addEntryTextHighlight}
+        onRemoveEntryTextHighlight={removeSelectedEntryTextHighlight}
         onMiniBoundsChange={handleAnnotationHistoryMiniBounds}
         noteFontScale={noteFontScale}
         onNoteFontScaleChange={setNoteFontScale}

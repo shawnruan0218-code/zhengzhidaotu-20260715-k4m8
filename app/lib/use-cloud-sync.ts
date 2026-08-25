@@ -183,6 +183,7 @@ function annotationRecord(userId: string, version: StudyVersion, entryId: string
       entryId,
       note: version.notes[entryId] ?? "",
       noteHighlights: version.noteHighlights[entryId] ?? [],
+      entryTextHighlights: version.entryTextHighlights[entryId] ?? [],
       noteCreatedAt: version.noteCreatedAt[entryId] ?? null,
     },
     added_at: version.noteCreatedAt[entryId] ?? new Date(version.createdAt || 0).toISOString(),
@@ -273,6 +274,23 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
         return normalized.length ? [[entryId, normalized]] : [];
       }))
     : {};
+  const entryTextHighlights = value.entryTextHighlights && typeof value.entryTextHighlights === "object" &&
+    !Array.isArray(value.entryTextHighlights)
+    ? Object.fromEntries(Object.entries(value.entryTextHighlights).flatMap(([entryId, ranges]) => {
+        if (!Array.isArray(ranges)) return [];
+        const normalized = ranges.flatMap((range) => {
+          if (!range || typeof range !== "object") return [];
+          const item = range as Partial<NoteHighlightRange>;
+          return typeof item.start === "number" &&
+            typeof item.end === "number" &&
+            typeof item.quote === "string" &&
+            item.end > item.start
+            ? [{ start: item.start, end: item.end, quote: item.quote }]
+            : [];
+        });
+        return normalized.length ? [[entryId, normalized]] : [];
+      }))
+    : {};
   const reviewItems = normalizeReviewItems(value.reviewItems);
   return {
     id: value.id,
@@ -284,12 +302,14 @@ function normalizeRemoteVersion(value: Record<string, unknown>, updatedAt: strin
       : [],
     notes,
     noteHighlights,
+    entryTextHighlights,
     noteCreatedAt,
     annotationUpdatedAt: normalizeAnnotationUpdatedAt(
       value.annotationUpdatedAt,
       notes,
       noteCreatedAt,
       updatedAt,
+      entryTextHighlights,
     ),
     highlightHistory: Array.isArray(value.highlightHistory)
       ? value.highlightHistory
@@ -326,11 +346,24 @@ function normalizeRemoteAnnotation(record: SyncRecord): AnnotationSyncSnapshot |
           : [];
       })
     : [];
+  const entryTextHighlights = Array.isArray(value.entryTextHighlights)
+    ? value.entryTextHighlights.flatMap((range) => {
+        if (!range || typeof range !== "object") return [];
+        const item = range as Partial<NoteHighlightRange>;
+        return typeof item.start === "number" &&
+          typeof item.end === "number" &&
+          typeof item.quote === "string" &&
+          item.end > item.start
+          ? [{ start: item.start, end: item.end, quote: item.quote }]
+          : [];
+      })
+    : [];
   return {
     versionId: value.versionId,
     entryId: value.entryId,
     note: value.note,
     noteHighlights,
+    entryTextHighlights,
     noteCreatedAt: typeof value.noteCreatedAt === "string" && !Number.isNaN(Date.parse(value.noteCreatedAt))
       ? value.noteCreatedAt
       : null,
