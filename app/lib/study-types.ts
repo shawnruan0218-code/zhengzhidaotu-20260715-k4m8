@@ -67,7 +67,7 @@ export type Tombstone = {
 
 export type StoredSyncState = {
   schemaVersion: 1;
-  annotationRecordsVersion?: 1;
+  annotationRecordsVersion?: 1 | 2;
   tombstones: Record<string, Tombstone>;
   lastSyncAt: string | null;
   cloudCursor?: string | null;

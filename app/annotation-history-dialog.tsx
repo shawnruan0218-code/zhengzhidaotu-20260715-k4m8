@@ -304,6 +304,7 @@ export function AnnotationHistoryDialog({
   const [quickLibraryLevel, setQuickLibraryLevel] = useState<ReviewLibraryLevel>(1);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [quickIndex, setQuickIndex] = useState(0);
+  const [quickJumpDraft, setQuickJumpDraft] = useState("1");
   const [todayReviewState, setTodayReviewState] = useState<TodayReviewState>(initialTodayReviewState);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
@@ -442,9 +443,21 @@ export function AnnotationHistoryDialog({
     const bounded = Math.max(0, Math.min(quickRecords.length - 1, nextIndex));
     quickIndexRef.current = bounded;
     setQuickIndex(bounded);
+    setQuickJumpDraft(String(bounded + 1));
     markQuickRecordViewed(quickRecords[bounded]);
     visitRecord(quickRecords[bounded], true);
   }, [markQuickRecordViewed, quickRecords, visitRecord]);
+
+  const submitQuickJump = useCallback(() => {
+    const requested = Number.parseInt(quickJumpDraft, 10);
+    if (!Number.isFinite(requested) || !quickRecords.length) {
+      setQuickJumpDraft(String(safeQuickIndex + 1));
+      return;
+    }
+    const bounded = Math.max(1, Math.min(quickRecords.length, requested));
+    setQuickJumpDraft(String(bounded));
+    goToQuickIndex(bounded - 1);
+  }, [goToQuickIndex, quickJumpDraft, quickRecords.length, safeQuickIndex]);
 
   const startQuickReview = (scope: QuickScope = "all", libraryLevel: ReviewLibraryLevel = selectedLibraryLevel) => {
     const scopedRecords = scope === "library"
@@ -461,6 +474,7 @@ export function AnnotationHistoryDialog({
     enterMiniMode(true);
     quickIndexRef.current = initialIndex;
     setQuickIndex(initialIndex);
+    setQuickJumpDraft(String(initialIndex + 1));
     markQuickRecordViewed(scopedRecords[initialIndex]);
     visitRecord(scopedRecords[initialIndex], true);
   };
@@ -651,7 +665,7 @@ export function AnnotationHistoryDialog({
           {view === "quick" && (
             <section className="annotation-quick-review" aria-live="polite">
               {currentQuickRecord ? <>
-                <header><span>{safeQuickIndex + 1} / {quickRecords.length}</span><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
+                <header><div className="annotation-quick-progress"><span>{safeQuickIndex + 1} / {quickRecords.length}</span><form onSubmit={(event) => { event.preventDefault(); submitQuickJump(); }}><label>快速跳到第<input aria-label="快速跳到第几条" inputMode="numeric" pattern="[0-9]*" value={quickJumpDraft} onChange={(event) => setQuickJumpDraft(event.target.value.replace(/\D/g, ""))} onFocus={(event) => event.currentTarget.select()} onBlur={submitQuickJump} />条</label></form></div><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
                 <div className="annotation-quick-source"><strong><HighlightedEntryText text={currentQuickRecord.entryText} ranges={currentQuickRecord.entryTextHighlights} entryId={currentQuickRecord.entryId} versionId={currentQuickRecord.versionId} /></strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
                 <div className="annotation-quick-note"><InlineNoteEditor key={currentQuickRecord.id} record={currentQuickRecord} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} /></div>
                 <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>

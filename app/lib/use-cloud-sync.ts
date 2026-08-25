@@ -30,7 +30,14 @@ import {
   type CloudflareUser,
 } from "./cloudflare-client";
 import { normalizeReviewItems } from "./review-library";
-import type { NoteHighlightRange, StoredSyncState, StudyVersion, Tombstone } from "./study-types";
+import type {
+  NoteHighlightRange,
+  StoredLibrary,
+  StoredSettings,
+  StoredSyncState,
+  StudyVersion,
+  Tombstone,
+} from "./study-types";
 import { EPOCH_TIMESTAMP, nextIsoTimestamp } from "./study-types";
 import {
   chunkItems,
@@ -78,11 +85,12 @@ type PullResponse = {
 };
 
 const PUSH_BATCH_SIZE = 25;
+const ANNOTATION_RECORDS_VERSION = 2;
 
 function emptySyncState(): StoredSyncState {
   return {
     schemaVersion: 1,
-    annotationRecordsVersion: 1,
+    annotationRecordsVersion: ANNOTATION_RECORDS_VERSION,
     tombstones: {},
     lastSyncAt: null,
     cloudCursor: null,
@@ -118,13 +126,14 @@ function readSyncState(): StoredSyncState {
       : {};
     return {
       schemaVersion: 1,
-      annotationRecordsVersion: 1,
+      annotationRecordsVersion: ANNOTATION_RECORDS_VERSION,
       tombstones,
       lastSyncAt: typeof parsed.lastSyncAt === "string" ? parsed.lastSyncAt : null,
-      cloudCursor: parsed.annotationRecordsVersion === 1 && typeof parsed.cloudCursor === "string"
+      cloudCursor: parsed.annotationRecordsVersion === ANNOTATION_RECORDS_VERSION && typeof parsed.cloudCursor === "string"
         ? parsed.cloudCursor
         : null,
-      syncedRecordVersions: parsed.annotationRecordsVersion === 1 ? syncedRecordVersions : {},
+      syncedRecordVersions:
+        parsed.annotationRecordsVersion === ANNOTATION_RECORDS_VERSION ? syncedRecordVersions : {},
     };
   } catch {
     return emptySyncState();
@@ -142,7 +151,7 @@ function writeSyncState(
       STORAGE_KEYS.syncState,
       JSON.stringify({
         schemaVersion: 1,
-        annotationRecordsVersion: 1,
+        annotationRecordsVersion: ANNOTATION_RECORDS_VERSION,
         tombstones,
         lastSyncAt,
         cloudCursor,
@@ -414,9 +423,9 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
   const runningSync = useRef<Promise<void> | null>(null);
   const syncQueued = useRef(false);
 
-  useEffect(() => {
-    latestInputs.current = inputs;
-  }, [inputs]);
+  // Keep event handlers on the latest render immediately. A passive effect can be
+  // one render late when a user highlights text and a sync starts in the same tick.
+  latestInputs.current = inputs;
 
   useEffect(() => {
     if (!inputs.hydrated || initialSyncState.current) return;
@@ -506,7 +515,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         activeRecord = record;
       }
     }
-    if (!nextVersions.length && !annotationSnapshots.length) return;
+    if (!nextVersions.length && !annotationSnapshots.length) return latestInputs.current.versions;
     const reconciledTombstones = { ...nextTombstones };
     for (const [itemKey, local] of Object.entries(tombstonesRef.current)) {
       const remote = reconciledTombstones[itemKey];
@@ -520,37 +529,62 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
           tombstone.itemType === "study_version" && key.startsWith(versionItemPrefix))
         .map(([key, tombstone]) => [key.slice(versionItemPrefix.length), tombstone.updatedAt]),
     );
-    tombstonesRef.current = reconciledTombstones;
-    latestInputs.current.setVersions((current) => {
-      let reconciled = nextVersions.length
-        ? reconcileVersionSnapshots(current, nextVersions, deletedVersionUpdates)
-        : current;
-      if (annotationSnapshots.length) {
-        const snapshotsByVersion = new Map<string, AnnotationSyncSnapshot[]>();
-        annotationSnapshots.forEach((snapshot) => {
-          snapshotsByVersion.set(snapshot.versionId, [
-            ...(snapshotsByVersion.get(snapshot.versionId) ?? []),
-            snapshot,
-          ]);
-        });
-        reconciled = reconciled.map((version) =>
-          (snapshotsByVersion.get(version.id) ?? []).reduce(applyAnnotationSyncSnapshot, version),
-        );
-      }
-      return JSON.stringify(current) === JSON.stringify(reconciled) ? current : reconciled;
-    });
+    let reconciled = nextVersions.length
+      ? reconcileVersionSnapshots(latestInputs.current.versions, nextVersions, deletedVersionUpdates)
+      : latestInputs.current.versions;
+    if (annotationSnapshots.length) {
+      const snapshotsByVersion = new Map<string, AnnotationSyncSnapshot[]>();
+      annotationSnapshots.forEach((snapshot) => {
+        snapshotsByVersion.set(snapshot.versionId, [
+          ...(snapshotsByVersion.get(snapshot.versionId) ?? []),
+          snapshot,
+        ]);
+      });
+      reconciled = reconciled.map((version) =>
+        (snapshotsByVersion.get(version.id) ?? []).reduce(applyAnnotationSyncSnapshot, version),
+      );
+    }
     const requestedActive = activeRecord && typeof activeRecord.item_data.activeVersionId === "string"
       ? activeRecord.item_data.activeVersionId
       : "";
+    let activeId = latestInputs.current.activeVersionId;
+    let activeUpdatedAt = latestInputs.current.activeVersionUpdatedAt;
     if (nextVersions.length) {
-      const activeId = nextVersions.some((version) => version.id === requestedActive)
+      activeId = nextVersions.some((version) => version.id === requestedActive)
         ? requestedActive
         : nextVersions[0].id;
-      const activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
-      latestInputs.current.setActiveVersionId((current) => current === activeId ? current : activeId);
-      latestInputs.current.setActiveVersionUpdatedAt((current) =>
-        current === activeUpdatedAt ? current : activeUpdatedAt);
+      activeUpdatedAt = activeRecord?.updated_at ?? EPOCH_TIMESTAMP;
     }
+
+    // Data safety invariant: merged study data is durable before the cloud cursor
+    // may advance. If either write fails, throw and leave the old cursor intact so
+    // the same remote page is pulled again on the next sync.
+    window.localStorage.setItem(
+      STORAGE_KEYS.library,
+      JSON.stringify({ schemaVersion: 1, versions: reconciled } satisfies StoredLibrary),
+    );
+    window.localStorage.setItem(
+      STORAGE_KEYS.settings,
+      JSON.stringify({
+        schemaVersion: 1,
+        activeVersionId: activeId,
+        updatedAt: activeUpdatedAt,
+      } satisfies StoredSettings),
+    );
+
+    tombstonesRef.current = reconciledTombstones;
+    const setters = latestInputs.current;
+    latestInputs.current = {
+      ...setters,
+      versions: reconciled,
+      activeVersionId: activeId,
+      activeVersionUpdatedAt: activeUpdatedAt,
+    };
+    setters.setVersions(reconciled);
+    setters.setActiveVersionId((current) => current === activeId ? current : activeId);
+    setters.setActiveVersionUpdatedAt((current) =>
+      current === activeUpdatedAt ? current : activeUpdatedAt);
+    return reconciled;
   }, []);
 
   const performSync = useCallback(async () => {

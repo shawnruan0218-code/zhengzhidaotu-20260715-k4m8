@@ -3754,6 +3754,47 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.annotation-quick-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.annotation-quick-progress form,
+.annotation-quick-progress label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.annotation-quick-progress label {
+  color: #7e339f;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.annotation-quick-progress input {
+  width: 44px;
+  height: 28px;
+  padding: 0 6px;
+  color: #5f2578;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: rgba(175, 82, 222, 0.08);
+  border: 1px solid rgba(175, 82, 222, 0.18);
+  border-radius: 8px;
+  outline: none;
+}
+
+.annotation-quick-progress input:focus {
+  background: #fff;
+  border-color: rgba(126, 51, 159, 0.48);
+  box-shadow: 0 0 0 3px rgba(175, 82, 222, 0.1);
+}
+
 .annotation-quick-membership {
   display: flex;
   align-items: center;

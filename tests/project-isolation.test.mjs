@@ -79,3 +79,15 @@ test("runtime configuration only exposes the public Cloudflare Worker URL", asyn
   assert.match(joined, /NEXT_PUBLIC_CLOUDFLARE_API_URL/);
   assert.doesNotMatch(joined, /NEXT_PUBLIC_SUPABASE|service_role|SUPABASE_SECRET_KEY/i);
 });
+
+test("critical study edits are durable before a sync cursor can advance", async () => {
+  const [reader, sync] = await Promise.all([
+    source("app/study-reader.tsx"),
+    source("app/lib/use-cloud-sync.ts"),
+  ]);
+  assert.match(reader, /commitVersionsDurably[\s\S]*?localStorage\.setItem\([\s\S]*?STORAGE_KEYS\.library/);
+  assert.match(sync, /ANNOTATION_RECORDS_VERSION = 2/);
+  const mergeWrite = sync.indexOf("STORAGE_KEYS.library", sync.indexOf("const applyMergedRecords"));
+  const cursorAdvance = sync.indexOf("cursorRef.current = confirmed.cursor", sync.indexOf("const performSync"));
+  assert.ok(mergeWrite >= 0 && cursorAdvance > mergeWrite);
+});

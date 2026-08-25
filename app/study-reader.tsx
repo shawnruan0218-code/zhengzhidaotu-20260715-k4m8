@@ -950,6 +950,34 @@ export function StudyReader() {
     startId: string;
     lastId: string;
   } | null>(null);
+  const versionsRef = useRef(versions);
+
+  useEffect(() => {
+    versionsRef.current = versions;
+  }, [versions]);
+
+  const commitVersionsDurably = useCallback(
+    (update: StudyVersion[] | ((current: StudyVersion[]) => StudyVersion[])) => {
+      const current = versionsRef.current;
+      const next = typeof update === "function" ? update(current) : update;
+      if (next === current) return true;
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEYS.library,
+          JSON.stringify({ schemaVersion: 1, versions: next } satisfies StoredLibrary),
+        );
+      } catch {
+        setToast("本地保存失败，本次修改未提交；请不要刷新页面");
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast(""), 6_000);
+        return false;
+      }
+      versionsRef.current = next;
+      setVersions(next);
+      return true;
+    },
+    [],
+  );
 
   const cloud = useCloudSync({
     versions,
@@ -970,7 +998,7 @@ export function StudyReader() {
 
   const updateActiveVersion = useCallback(
     (updater: (version: StudyVersion) => StudyVersion) => {
-      setVersions((current) =>
+      return commitVersionsDurably((current) =>
         current.map((version) =>
           version.id === activeVersionId
             ? { ...updater(version), updatedAt: nextIsoTimestamp(version.updatedAt) }
@@ -978,7 +1006,7 @@ export function StudyReader() {
         ),
       );
     },
-    [activeVersionId],
+    [activeVersionId, commitVersionsDurably],
   );
 
   const setHighlights = useCallback(
@@ -1125,6 +1153,29 @@ export function StudyReader() {
       // Versions still work for the current session if local storage is unavailable.
     }
   }, [activeVersionId, activeVersionUpdatedAt, versions, versionsHydrated]);
+
+  useEffect(() => {
+    if (!versionsHydrated) return;
+    const flushLatestLibrary = () => {
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEYS.library,
+          JSON.stringify({ schemaVersion: 1, versions: versionsRef.current } satisfies StoredLibrary),
+        );
+      } catch {
+        // Critical edits are already saved synchronously. This is a final lifecycle fallback.
+      }
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") flushLatestLibrary();
+    };
+    window.addEventListener("pagehide", flushLatestLibrary);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushLatestLibrary);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [versionsHydrated]);
 
   useEffect(() => {
     try {
@@ -1279,25 +1330,25 @@ export function StudyReader() {
       reviewItems: {},
     };
     clearTransientStudyState();
-    setVersions((current) => [...current, nextVersion]);
+    if (!commitVersionsDurably((current) => [...current, nextVersion])) return;
     setActiveVersionId(nextVersion.id);
     setActiveVersionUpdatedAt((current) => nextIsoTimestamp(current));
     setVersionDialog(null);
     setVersionNameDraft("");
     showToast(`已新建并切换到「${nextVersion.name}」`);
-  }, [clearTransientStudyState, showToast, versionNameDraft]);
+  }, [clearTransientStudyState, commitVersionsDurably, showToast, versionNameDraft]);
 
   const deleteActiveVersion = useCallback(() => {
     if (!activeVersion || versions.length <= 1) return;
     const remainingVersions = versions.filter((version) => version.id !== activeVersion.id);
     cloud.markVersionDeleted(activeVersion.id);
     clearTransientStudyState();
-    setVersions(remainingVersions);
+    if (!commitVersionsDurably(remainingVersions)) return;
     setActiveVersionId(remainingVersions[0].id);
     setActiveVersionUpdatedAt((current) => nextIsoTimestamp(current));
     setVersionDialog(null);
     showToast(`已删除「${activeVersion.name}」`);
-  }, [activeVersion, clearTransientStudyState, cloud, showToast, versions]);
+  }, [activeVersion, clearTransientStudyState, cloud, commitVersionsDurably, showToast, versions]);
 
   const entryPages = useMemo(
     () =>
@@ -1456,7 +1507,7 @@ export function StudyReader() {
   const saveAnnotation = useCallback(() => {
     if (!activeEntryId || !noteDraft.trim()) return;
     const savedAt = new Date().toISOString();
-    updateActiveVersion((version) => {
+    const committed = updateActiveVersion((version) => {
       const alreadyExists = Boolean(version.notes[activeEntryId]);
       const annotationUpdatedAt = nextIsoTimestamp(
         version.annotationUpdatedAt[activeEntryId] ?? version.updatedAt,
@@ -1474,13 +1525,14 @@ export function StudyReader() {
         },
       };
     });
+    if (!committed) return;
     closeAnnotation();
     showToast("批注已保存");
   }, [activeEntryId, closeAnnotation, noteDraft, showToast, updateActiveVersion]);
 
   const deleteAnnotation = useCallback(() => {
     if (!activeEntryId) return;
-    updateActiveVersion((version) => {
+    const committed = updateActiveVersion((version) => {
       const annotationUpdatedAt = nextIsoTimestamp(
         version.annotationUpdatedAt[activeEntryId] ?? version.updatedAt,
       );
@@ -1501,6 +1553,7 @@ export function StudyReader() {
         },
       };
     });
+    if (!committed) return;
     setFloatingNoteEntryId(null);
     closeAnnotation();
     showToast("批注已删除");
@@ -1508,7 +1561,7 @@ export function StudyReader() {
 
   const addNoteTextHighlight = useCallback(
     (selection: SelectedNoteText) => {
-      setVersions((current) =>
+      const committed = commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
             return version;
@@ -1545,11 +1598,12 @@ export function StudyReader() {
           };
         }),
       );
+      if (!committed) return;
       window.getSelection()?.removeAllRanges();
       clearRememberedNoteText();
       showToast("已高亮批注中的选中文字");
     },
-    [showToast],
+    [commitVersionsDurably, showToast],
   );
 
   const removeSelectedNoteTextHighlight = useCallback(
@@ -1562,7 +1616,7 @@ export function StudyReader() {
             selection,
           )
         : null;
-      setVersions((current) =>
+      const committed = commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
             return version;
@@ -1590,11 +1644,12 @@ export function StudyReader() {
           };
         }),
       );
+      if (!committed) return;
       window.getSelection()?.removeAllRanges();
       clearRememberedNoteText();
       showToast(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
     },
-    [showToast, versions],
+    [commitVersionsDurably, showToast, versions],
   );
 
   const addEntryTextHighlight = useCallback(
@@ -1602,7 +1657,7 @@ export function StudyReader() {
       const selectedVersion = versions.find((version) => version.id === selection.versionId);
       const changed = Boolean(selectedVersion) && !(selectedVersion?.entryTextHighlights[selection.entryId] ?? [])
         .some((range) => range.start === selection.start && range.end === selection.end);
-      setVersions((current) =>
+      const committed = commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== selection.versionId) return version;
           const existing = version.entryTextHighlights[selection.entryId] ?? [];
@@ -1629,11 +1684,12 @@ export function StudyReader() {
           };
         }),
       );
+      if (!committed) return;
       window.getSelection()?.removeAllRanges();
       clearRememberedEntryText();
       showToast(changed ? "已高亮快速复习词条中的选中文字" : "这段文字已经高亮");
     },
-    [showToast, versions],
+    [commitVersionsDurably, showToast, versions],
   );
 
   const removeSelectedEntryTextHighlight = useCallback(
@@ -1646,7 +1702,7 @@ export function StudyReader() {
             selection,
           )
         : null;
-      setVersions((current) =>
+      const committed = commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== selection.versionId) return version;
           const result = removeNoteHighlightSelection(
@@ -1672,11 +1728,12 @@ export function StudyReader() {
           };
         }),
       );
+      if (!committed) return;
       window.getSelection()?.removeAllRanges();
       clearRememberedEntryText();
       showToast(preview?.changed ? "已取消快速复习词条中的选中文字高亮" : "选中文字没有高亮");
     },
-    [showToast, versions],
+    [commitVersionsDurably, showToast, versions],
   );
 
   const goToPage = useCallback(
@@ -1781,7 +1838,7 @@ export function StudyReader() {
       const normalized = note.trim();
       if (!normalized) return;
       const savedAt = new Date().toISOString();
-      setVersions((current) =>
+      const committed = commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== record.versionId || version.notes[record.entryId] === normalized) return version;
           const nextRanges = (version.noteHighlights[record.entryId] ?? []).flatMap((range) => {
@@ -1810,9 +1867,10 @@ export function StudyReader() {
           };
         }),
       );
+      if (!committed) return;
       setFloatingNoteEntryId(record.entryId);
     },
-    [],
+    [commitVersionsDurably],
   );
 
   const addAnnotationToReview = useCallback(
@@ -1825,7 +1883,7 @@ export function StudyReader() {
         return;
       }
       const timestamp = nextIsoTimestamp();
-      setVersions((current) =>
+      if (!commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== record.versionId) return version;
           if (version.reviewItems[record.entryId]?.levels.includes(level)) return version;
@@ -1835,16 +1893,16 @@ export function StudyReader() {
             updatedAt: nextIsoTimestamp(version.updatedAt),
           };
         }),
-      );
+      )) return;
       showToast(`已加入复习库 ${level}`);
     },
-    [showToast, versions],
+    [commitVersionsDurably, showToast, versions],
   );
 
   const removeAnnotationFromReview = useCallback(
     (record: AnnotationRecord, level: ReviewLibraryLevel) => {
       const timestamp = nextIsoTimestamp();
-      setVersions((current) =>
+      if (!commitVersionsDurably((current) =>
         current.map((version) => {
           if (version.id !== record.versionId || !version.reviewItems[record.entryId]?.levels.includes(level)) return version;
           return {
@@ -1853,10 +1911,10 @@ export function StudyReader() {
             updatedAt: nextIsoTimestamp(version.updatedAt),
           };
         }),
-      );
+      )) return;
       showToast(level === 1 ? "已移出全部复习库，原批注保持不变" : `已移出复习库 ${level} 及后续层级，原批注保持不变`);
     },
-    [showToast],
+    [commitVersionsDurably, showToast],
   );
 
   useEffect(() => {

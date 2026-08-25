@@ -100,3 +100,27 @@ test("词条原文高亮可以在没有批注正文时独立同步", () => {
   assert.deepEqual(updated.highlights, ["p1-l1-g1"]);
   assert.deepEqual(annotationSyncEntryIds(updated), ["first", "second", "third"]);
 });
+
+test("完整对账会恢复云端仍存在的批注文字高亮", () => {
+  const current = version();
+  current.notes.route = "思想路线的核心是：实事求是";
+  current.noteCreatedAt.route = oldTime;
+  current.annotationUpdatedAt.route = oldTime;
+  current.noteHighlights.route = [];
+  const recovered = applyAnnotationSyncSnapshot(current, {
+    versionId: current.id,
+    entryId: "route",
+    note: "思想路线的核心是：实事求是",
+    noteHighlights: [
+      { start: 0, end: 4, quote: "思想路线" },
+      { start: 8, end: 13, quote: "：实事求是" },
+    ],
+    entryTextHighlights: [],
+    noteCreatedAt: oldTime,
+    updatedAt: newTime,
+  });
+  assert.deepEqual(recovered.noteHighlights.route, [
+    { start: 0, end: 4, quote: "思想路线" },
+    { start: 8, end: 13, quote: "：实事求是" },
+  ]);
+});
