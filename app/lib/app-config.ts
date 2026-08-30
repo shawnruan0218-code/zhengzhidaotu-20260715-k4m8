@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   noteDisplay: `${APP_NAMESPACE}-note-display-v2`,
   quickReviewActivity: `${APP_NAMESPACE}-quick-review-activity-v1`,
   fiveDaySprint: `${APP_NAMESPACE}-five-day-sprint-v1`,
+  reviewBookmark: `${APP_NAMESPACE}-review-bookmark-v1`,
 } as const;
 
 export const CACHE_NAME = `${APP_NAMESPACE}-cache-v1`;

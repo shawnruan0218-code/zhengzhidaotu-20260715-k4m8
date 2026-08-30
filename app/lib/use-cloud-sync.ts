@@ -34,6 +34,10 @@ import {
   normalizeFiveDaySprintPlan,
   type FiveDaySprintPlan,
 } from "./five-day-sprint";
+import {
+  normalizeReviewBookmark,
+  type ReviewBookmark,
+} from "./review-bookmark";
 import { normalizeReviewItems } from "./review-library";
 import type {
   NoteHighlightRange,
@@ -67,11 +71,14 @@ type SyncInputs = {
   activeVersionUpdatedAt: string;
   fiveDaySprintPlan: FiveDaySprintPlan | null;
   fiveDaySprintPlanRef: MutableRefObject<FiveDaySprintPlan | null>;
+  reviewBookmark: ReviewBookmark | null;
+  reviewBookmarkRef: MutableRefObject<ReviewBookmark | null>;
   hydrated: boolean;
   setVersions: Dispatch<SetStateAction<StudyVersion[]>>;
   setActiveVersionId: Dispatch<SetStateAction<string>>;
   setActiveVersionUpdatedAt: Dispatch<SetStateAction<string>>;
   setFiveDaySprintPlan: Dispatch<SetStateAction<FiveDaySprintPlan | null>>;
+  setReviewBookmark: Dispatch<SetStateAction<ReviewBookmark | null>>;
 };
 
 export type CloudSyncController = {
@@ -238,6 +245,20 @@ function fiveDaySprintRecord(userId: string, plan: FiveDaySprintPlan): SyncRecor
   };
 }
 
+function reviewBookmarkRecord(userId: string, bookmark: ReviewBookmark): SyncRecord {
+  const itemKey = scopedItemKey("setting:review-bookmark");
+  return {
+    id: `${userId}::${itemKey}`,
+    user_id: userId,
+    item_key: itemKey,
+    item_type: "review_bookmark",
+    item_data: bookmark as unknown as Record<string, unknown>,
+    added_at: bookmark.createdAt,
+    updated_at: bookmark.updatedAt,
+    deleted_at: null,
+  };
+}
+
 function tombstoneRecord(userId: string, itemKey: string, tombstone: Tombstone): SyncRecord {
   return {
     id: `${userId}::${itemKey}`,
@@ -257,6 +278,7 @@ function buildLocalRecords(
   activeVersionId: string,
   activeVersionUpdatedAt: string,
   fiveDaySprintPlan: FiveDaySprintPlan | null,
+  reviewBookmark: ReviewBookmark | null,
   tombstones: Record<string, Tombstone>,
 ): SyncRecord[] {
   const records = [
@@ -266,6 +288,7 @@ function buildLocalRecords(
     ),
     activeVersionRecord(userId, activeVersionId, activeVersionUpdatedAt),
     ...(fiveDaySprintPlan ? [fiveDaySprintRecord(userId, fiveDaySprintPlan)] : []),
+    ...(reviewBookmark ? [reviewBookmarkRecord(userId, reviewBookmark)] : []),
   ];
   const byKey = new Map(records.map((record) => [record.item_key, record]));
   for (const [itemKey, tombstone] of Object.entries(tombstones)) {
@@ -524,6 +547,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     const versionItemPrefix = scopedItemKey("version:");
     let activeRecord: SyncRecord | null = null;
     let nextFiveDaySprintPlan: FiveDaySprintPlan | null = null;
+    let nextReviewBookmark: ReviewBookmark | null = null;
     for (const record of records) {
       if (record.deleted_at) {
         nextTombstones[record.item_key] = {
@@ -541,10 +565,12 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         activeRecord = record;
       } else if (record.item_type === "five_day_sprint") {
         nextFiveDaySprintPlan = normalizeFiveDaySprintPlan(record.item_data);
+      } else if (record.item_type === "review_bookmark") {
+        nextReviewBookmark = normalizeReviewBookmark(record.item_data);
       }
     }
     const currentVersions = latestInputs.current.versionsRef.current;
-    if (!nextVersions.length && !annotationSnapshots.length && !nextFiveDaySprintPlan) {
+    if (!nextVersions.length && !annotationSnapshots.length && !nextFiveDaySprintPlan && !nextReviewBookmark) {
       return currentVersions;
     }
     const reconciledTombstones = { ...nextTombstones };
@@ -608,17 +634,25 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         JSON.stringify(nextFiveDaySprintPlan),
       );
     }
+    if (nextReviewBookmark) {
+      window.localStorage.setItem(
+        STORAGE_KEYS.reviewBookmark,
+        JSON.stringify(nextReviewBookmark),
+      );
+    }
 
     tombstonesRef.current = reconciledTombstones;
     const setters = latestInputs.current;
     setters.versionsRef.current = reconciled;
     setters.fiveDaySprintPlanRef.current = nextFiveDaySprintPlan ?? setters.fiveDaySprintPlanRef.current;
+    setters.reviewBookmarkRef.current = nextReviewBookmark ?? setters.reviewBookmarkRef.current;
     latestInputs.current = {
       ...setters,
       versions: reconciled,
       activeVersionId: activeId,
       activeVersionUpdatedAt: activeUpdatedAt,
       fiveDaySprintPlan: nextFiveDaySprintPlan ?? setters.fiveDaySprintPlan,
+      reviewBookmark: nextReviewBookmark ?? setters.reviewBookmark,
     };
     setters.setVersions(reconciled);
     setters.setActiveVersionId((current) => current === activeId ? current : activeId);
@@ -627,6 +661,10 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     if (nextFiveDaySprintPlan) {
       setters.setFiveDaySprintPlan((current) =>
         current?.updatedAt === nextFiveDaySprintPlan?.updatedAt ? current : nextFiveDaySprintPlan);
+    }
+    if (nextReviewBookmark) {
+      setters.setReviewBookmark((current) =>
+        current?.updatedAt === nextReviewBookmark?.updatedAt ? current : nextReviewBookmark);
     }
     return reconciled;
   }, []);
@@ -649,6 +687,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         latestInputs.current.activeVersionId,
         latestInputs.current.activeVersionUpdatedAt,
         latestInputs.current.fiveDaySprintPlanRef.current,
+        latestInputs.current.reviewBookmarkRef.current,
         tombstonesRef.current,
       );
       const merged = mergeRecordSets(localRecords, firstPull.records)
@@ -719,6 +758,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     inputs.activeVersionId,
     inputs.activeVersionUpdatedAt,
     inputs.fiveDaySprintPlan,
+    inputs.reviewBookmark,
     inputs.hydrated,
     inputs.versions,
     syncNow,

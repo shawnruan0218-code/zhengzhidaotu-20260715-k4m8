@@ -103,3 +103,16 @@ test("a cloud sync finishing after a highlight always reconciles against the new
   assert.match(sync, /setters\.versionsRef\.current = reconciled;[\s\S]*?setters\.setVersions\(reconciled\)/);
   assert.doesNotMatch(sync, /reconcileVersionSnapshots\(latestInputs\.current\.versions,/);
 });
+
+test("review bookmark is durable locally and synchronized as an independent record", async () => {
+  const [reader, sync, bookmark] = await Promise.all([
+    source("app/study-reader.tsx"),
+    source("app/lib/use-cloud-sync.ts"),
+    source("app/lib/review-bookmark.ts"),
+  ]);
+  assert.match(reader, /commitReviewBookmarkDurably[\s\S]*?STORAGE_KEYS\.reviewBookmark[\s\S]*?reviewBookmarkRef\.current = bookmark/);
+  assert.match(sync, /item_type: "review_bookmark"/);
+  assert.match(sync, /latestInputs\.current\.reviewBookmarkRef\.current/);
+  assert.match(sync, /STORAGE_KEYS\.reviewBookmark/);
+  assert.doesNotMatch(bookmark, /noteHighlights|entryTextHighlights|\bnote:/);
+});

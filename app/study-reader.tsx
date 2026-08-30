@@ -42,6 +42,10 @@ import {
   REVIEW_LIBRARY_LEVELS,
 } from "./lib/review-library";
 import {
+  normalizeReviewBookmark,
+  type ReviewBookmark,
+} from "./lib/review-bookmark";
+import {
   attachLegacySummaryIds,
   buildLegacySummaryGroups,
   buildSummaryGroups,
@@ -852,6 +856,7 @@ export function StudyReader() {
   const [activeVersionUpdatedAt, setActiveVersionUpdatedAt] = useState(INITIAL_UPDATED_AT);
   const [versionsHydrated, setVersionsHydrated] = useState(false);
   const [fiveDaySprintPlan, setFiveDaySprintPlan] = useState<FiveDaySprintPlan | null>(null);
+  const [reviewBookmark, setReviewBookmark] = useState<ReviewBookmark | null>(null);
   const [versionDialog, setVersionDialog] = useState<"create" | "delete" | null>(null);
   const [versionNameDraft, setVersionNameDraft] = useState("");
   const [pendingSelection, setPendingSelection] = useState<string[]>([]);
@@ -957,6 +962,7 @@ export function StudyReader() {
   } | null>(null);
   const versionsRef = useRef(versions);
   const fiveDaySprintPlanRef = useRef(fiveDaySprintPlan);
+  const reviewBookmarkRef = useRef(reviewBookmark);
 
   useEffect(() => {
     versionsRef.current = versions;
@@ -965,6 +971,10 @@ export function StudyReader() {
   useEffect(() => {
     fiveDaySprintPlanRef.current = fiveDaySprintPlan;
   }, [fiveDaySprintPlan]);
+
+  useEffect(() => {
+    reviewBookmarkRef.current = reviewBookmark;
+  }, [reviewBookmark]);
 
   const commitVersionsDurably = useCallback(
     (update: StudyVersion[] | ((current: StudyVersion[]) => StudyVersion[])) => {
@@ -1003,6 +1013,20 @@ export function StudyReader() {
     return true;
   }, []);
 
+  const commitReviewBookmarkDurably = useCallback((bookmark: ReviewBookmark) => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.reviewBookmark, JSON.stringify(bookmark));
+    } catch {
+      setToast("本地保存失败，复习书签未标记；原批注没有变化");
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(""), 6_000);
+      return false;
+    }
+    reviewBookmarkRef.current = bookmark;
+    setReviewBookmark(bookmark);
+    return true;
+  }, []);
+
   const cloud = useCloudSync({
     versions,
     versionsRef,
@@ -1010,11 +1034,14 @@ export function StudyReader() {
     activeVersionUpdatedAt,
     fiveDaySprintPlan,
     fiveDaySprintPlanRef,
+    reviewBookmark,
+    reviewBookmarkRef,
     hydrated: versionsHydrated,
     setVersions,
     setActiveVersionId,
     setActiveVersionUpdatedAt,
     setFiveDaySprintPlan,
+    setReviewBookmark,
   });
 
   const activeVersion = versions.find((version) => version.id === activeVersionId) ?? null;
@@ -1100,6 +1127,7 @@ export function StudyReader() {
     let loadedActiveVersionId = "";
     let loadedActiveVersionUpdatedAt = INITIAL_UPDATED_AT;
     let loadedFiveDaySprintPlan: FiveDaySprintPlan | null = null;
+    let loadedReviewBookmark: ReviewBookmark | null = null;
 
     try {
       const storedLibrary = window.localStorage.getItem(STORAGE_KEYS.library);
@@ -1123,6 +1151,9 @@ export function StudyReader() {
       }
       loadedFiveDaySprintPlan = normalizeFiveDaySprintPlan(
         JSON.parse(window.localStorage.getItem(STORAGE_KEYS.fiveDaySprint) ?? "null"),
+      );
+      loadedReviewBookmark = normalizeReviewBookmark(
+        JSON.parse(window.localStorage.getItem(STORAGE_KEYS.reviewBookmark) ?? "null"),
       );
     } catch {
       // A damaged project-scoped payload falls back to a fresh local version.
@@ -1157,8 +1188,10 @@ export function StudyReader() {
     queueMicrotask(() => {
       if (cancelled) return;
       fiveDaySprintPlanRef.current = loadedFiveDaySprintPlan;
+      reviewBookmarkRef.current = loadedReviewBookmark;
       setVersions(loadedVersions);
       setFiveDaySprintPlan(loadedFiveDaySprintPlan);
+      setReviewBookmark(loadedReviewBookmark);
       setActiveVersionId(activeVersionExists ? loadedActiveVersionId : loadedVersions[0].id);
       setActiveVersionUpdatedAt(loadedActiveVersionUpdatedAt);
       setVersionsHydrated(true);
@@ -3554,6 +3587,8 @@ export function StudyReader() {
         reviewRecordsByLevel={reviewRecordsByLevel}
         fiveDaySprintPlan={fiveDaySprintPlan}
         onCreateFiveDaySprintPlan={commitFiveDaySprintPlanDurably}
+        reviewBookmark={reviewBookmark}
+        onSaveReviewBookmark={commitReviewBookmarkDurably}
         currentOutlineNodeId={outlinePathForLocation(OUTLINE, currentPage, 0.46).at(-1)?.id ?? null}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
