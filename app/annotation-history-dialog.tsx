@@ -18,6 +18,14 @@ import {
   type SelectedEntryText,
 } from "./entry-highlight-text";
 import { STORAGE_KEYS } from "./lib/app-config";
+import {
+  createFiveDaySprintPlan,
+  FIVE_DAY_SPRINT_DAYS,
+  fiveDaySprintDayForRecord,
+  recordsByFiveDaySprint,
+  type FiveDaySprintDay,
+  type FiveDaySprintPlan,
+} from "./lib/five-day-sprint";
 import { shortcutKey } from "./lib/keyboard-shortcuts";
 import type { OutlineNode } from "./lib/outline-navigation";
 import type { AnnotationRecord, ReviewLibraryLevel } from "./lib/study-types";
@@ -27,8 +35,8 @@ import {
   type SelectedNoteText,
 } from "./note-highlight-text";
 
-type HistoryView = "calendar" | "chapter" | "library" | "quick";
-type QuickScope = "all" | "chapter" | "library";
+type HistoryView = "calendar" | "chapter" | "sprint" | "library" | "quick";
+type QuickScope = "all" | "chapter" | "sprint" | "library";
 
 export type MiniReviewBounds = {
   left: number;
@@ -41,7 +49,9 @@ type Props = {
   open: boolean;
   records: AnnotationRecord[];
   reviewRecordsByLevel: Record<ReviewLibraryLevel, AnnotationRecord[]>;
+  fiveDaySprintPlan: FiveDaySprintPlan | null;
   outline: OutlineNode[];
+  currentOutlineNodeId: string | null;
   noteFontScale: number;
   onNoteFontScaleChange: (scale: number) => void;
   onClose: () => void;
@@ -53,6 +63,7 @@ type Props = {
   onRemoveNoteHighlight: (selection: SelectedNoteText) => void;
   onHighlightEntryText: (selection: SelectedEntryText) => void;
   onRemoveEntryTextHighlight: (selection: SelectedEntryText) => void;
+  onCreateFiveDaySprintPlan: (plan: FiveDaySprintPlan) => boolean;
   onMiniBoundsChange: (bounds: MiniReviewBounds | null) => void;
 };
 
@@ -60,6 +71,16 @@ function localDayKey(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+}
+
+function outlineIdPathForNode(nodes: OutlineNode[], targetId: string, parentIds: string[] = []): string[] {
+  for (const node of nodes) {
+    const path = [...parentIds, node.id];
+    if (node.id === targetId) return path;
+    const childPath = outlineIdPathForNode(node.children ?? [], targetId, path);
+    if (childPath.length) return childPath;
+  }
+  return [];
 }
 
 type TodayReviewState = {
@@ -279,7 +300,9 @@ export function AnnotationHistoryDialog({
   open,
   records,
   reviewRecordsByLevel,
+  fiveDaySprintPlan,
   outline,
+  currentOutlineNodeId,
   noteFontScale,
   onNoteFontScaleChange,
   onClose,
@@ -291,6 +314,7 @@ export function AnnotationHistoryDialog({
   onRemoveNoteHighlight,
   onHighlightEntryText,
   onRemoveEntryTextHighlight,
+  onCreateFiveDaySprintPlan,
   onMiniBoundsChange,
 }: Props) {
   const [showReturnToTop, setShowReturnToTop] = useState(false);
@@ -303,6 +327,7 @@ export function AnnotationHistoryDialog({
   const [selectedLibraryLevel, setSelectedLibraryLevel] = useState<ReviewLibraryLevel>(1);
   const [quickLibraryLevel, setQuickLibraryLevel] = useState<ReviewLibraryLevel>(1);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [selectedSprintDay, setSelectedSprintDay] = useState<FiveDaySprintDay>(1);
   const [quickIndex, setQuickIndex] = useState(0);
   const [quickJumpDraft, setQuickJumpDraft] = useState("1");
   const [todayReviewState, setTodayReviewState] = useState<TodayReviewState>(initialTodayReviewState);
@@ -311,6 +336,7 @@ export function AnnotationHistoryDialog({
   const quickIndexRef = useRef(0);
   const todayReviewStateRef = useRef(todayReviewState);
   const chapterRecordsRef = useRef<HTMLElement | null>(null);
+  const chapterTreeRef = useRef<HTMLElement | null>(null);
   const miniDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -334,9 +360,16 @@ export function AnnotationHistoryDialog({
       : [],
     [records, selectedChapterId],
   );
+  const sprintRecordsByDay = useMemo(
+    () => recordsByFiveDaySprint(outline, records, fiveDaySprintPlan),
+    [fiveDaySprintPlan, outline, records],
+  );
+  const selectedSprintRecords = sprintRecordsByDay[selectedSprintDay];
   const selectedLibraryRecords = reviewRecordsByLevel[selectedLibraryLevel];
   const quickRecords = quickScope === "library"
     ? reviewRecordsByLevel[quickLibraryLevel]
+    : quickScope === "sprint"
+      ? selectedSprintRecords
     : quickScope === "chapter" && selectedChapterId && chapterRecords.length
       ? chapterRecords
       : records;
@@ -356,6 +389,22 @@ export function AnnotationHistoryDialog({
     if (view !== "chapter" || !selectedChapterId) return;
     const frame = requestAnimationFrame(() => {
       chapterRecordsRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedChapterId, view]);
+
+  useEffect(() => {
+    if (view !== "chapter" || !selectedChapterId) return;
+    const frame = requestAnimationFrame(() => {
+      const tree = chapterTreeRef.current;
+      const row = tree?.querySelector<HTMLElement>(`[data-chapter-id="${CSS.escape(selectedChapterId)}"]`);
+      if (!tree || !row) return;
+      const treeRect = tree.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      tree.scrollTo({
+        top: Math.max(0, tree.scrollTop + rowRect.top - treeRect.top - tree.clientHeight / 2 + rowRect.height / 2),
+        behavior: "auto",
+      });
     });
     return () => cancelAnimationFrame(frame);
   }, [selectedChapterId, view]);
@@ -462,6 +511,8 @@ export function AnnotationHistoryDialog({
   const startQuickReview = (scope: QuickScope = "all", libraryLevel: ReviewLibraryLevel = selectedLibraryLevel) => {
     const scopedRecords = scope === "library"
       ? reviewRecordsByLevel[libraryLevel]
+      : scope === "sprint"
+        ? selectedSprintRecords
       : scope === "chapter" && selectedChapterId && chapterRecords.length
         ? chapterRecords
         : records;
@@ -477,6 +528,34 @@ export function AnnotationHistoryDialog({
     setQuickJumpDraft(String(initialIndex + 1));
     markQuickRecordViewed(scopedRecords[initialIndex]);
     visitRecord(scopedRecords[initialIndex], true);
+  };
+
+  const openChapterView = () => {
+    const reviewingPath = view === "quick"
+      ? currentQuickRecord?.outlinePath.map((item) => item.id) ?? []
+      : [];
+    const locationPath = reviewingPath.length
+      ? reviewingPath
+      : currentOutlineNodeId
+        ? outlineIdPathForNode(outline, currentOutlineNodeId)
+        : [];
+    const targetId = [...locationPath].reverse().find((id) => (chapterCounts.get(id) ?? 0) > 0)
+      ?? locationPath[0]
+      ?? currentOutlineNodeId;
+    if (targetId) setSelectedChapterId(targetId);
+    setView("chapter");
+  };
+
+  const openFiveDaySprint = () => {
+    let plan = fiveDaySprintPlan;
+    if (!plan) {
+      plan = createFiveDaySprintPlan(outline, records);
+      if (!onCreateFiveDaySprintPlan(plan)) return;
+    }
+    if (view === "quick" && currentQuickRecord) {
+      setSelectedSprintDay(fiveDaySprintDayForRecord(plan, currentQuickRecord));
+    }
+    setView("sprint");
   };
 
   useEffect(() => {
@@ -559,7 +638,8 @@ export function AnnotationHistoryDialog({
   const modeTabs = (
     <nav className="annotation-history-modes" aria-label="批注复习方式">
       <button type="button" className={view === "calendar" ? "is-active" : ""} onClick={() => setView("calendar")}>日历阅读</button>
-      <button type="button" className={view === "chapter" ? "is-active" : ""} onClick={() => setView("chapter")}>章节阅读</button>
+      <button type="button" className={view === "chapter" ? "is-active" : ""} onClick={openChapterView}>章节阅读</button>
+      <button type="button" className={view === "sprint" ? "is-active" : ""} onClick={openFiveDaySprint}>五天冲刺</button>
       <button type="button" className={view === "library" ? "is-active" : ""} onClick={() => { setSelectedLibraryLevel(1); setView("library"); }}>复习库 1</button>
       <button type="button" className={view === "quick" ? "is-active" : ""} onClick={() => startQuickReview("all")}>快速复习</button>
     </nav>
@@ -569,7 +649,7 @@ export function AnnotationHistoryDialog({
     const count = chapterCounts.get(node.id) ?? 0;
     return (
       <div className={`annotation-chapter-node level-${level}`} key={node.id}>
-        <button type="button" className={selectedChapterId === node.id ? "is-active" : ""} disabled={!count} onClick={() => setSelectedChapterId(node.id)}>
+        <button type="button" data-chapter-id={node.id} className={selectedChapterId === node.id ? "is-active" : ""} disabled={!count} onClick={() => setSelectedChapterId(node.id)}>
           <span>{node.title}</span><strong>{count} 条</strong>
         </button>
         {level < 3 && count > 0 && (node.children ?? []).map((child) => renderChapterNode(child, level + 1))}
@@ -599,7 +679,7 @@ export function AnnotationHistoryDialog({
               <button type="button" className="annotation-history-mini-close" aria-label="关闭批注历史小窗" onClick={closeHistory}>×</button>
               {view === "calendar" && <button type="button" className={`annotation-history-mini-calendar ${miniCalendarOpen ? "is-active" : ""}`} aria-label="切换其它日期" onClick={() => setMiniCalendarOpen((current) => !current)}>日</button>}
             </div>
-            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "划选原文或批注按 D 高亮 · A / S 切换 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
+            <div><strong id="annotation-history-title">{view === "quick" ? "快速复习" : view === "chapter" ? "章节批注" : view === "sprint" ? "五天冲刺" : view === "library" ? "复习库" : "当日批注"}</strong><span>{view === "quick" ? "划选原文或批注按 D 高亮 · A / S 切换 · 1 加入复习库" : "拖动标题栏移动 · 右下角缩放"}</span></div>
             <div className="annotation-history-mini-meta">{view === "quick" && <span className="annotation-history-today-count">今日共看了 {todayReviewState.ids.size.toLocaleString("zh-CN")} 条</span>}<span className="annotation-history-mini-grip" aria-hidden="true">•••</span></div>
           </header>
         ) : (
@@ -608,6 +688,7 @@ export function AnnotationHistoryDialog({
             <div className="annotation-history-summary" aria-label="批注历史统计">
               <div><strong>{records.length.toLocaleString("zh-CN")}</strong><span>条批注</span></div>
               <div><strong>{datedDayCount.toLocaleString("zh-CN")}</strong><span>个记录日</span></div>
+              <button type="button" className="annotation-history-sprint-launch" onClick={openFiveDaySprint}><strong>5</strong><span>天冲刺</span></button>
               <button type="button" className="annotation-history-mini-launch" onClick={() => enterMiniMode()}>小窗复习</button><kbd>H / ·</kbd>
             </div>
             <button type="button" className="sheet-close" aria-label="关闭批注历史" onClick={closeHistory}>×</button>
@@ -631,7 +712,7 @@ export function AnnotationHistoryDialog({
 
           {view === "chapter" && (
             <div className="annotation-chapter-reader">
-              <aside className="annotation-chapter-tree" aria-label="按大纲章节选择批注"><header><strong>选择章节</strong><span>数字为该范围内批注数</span></header>{outline.map((node) => renderChapterNode(node))}</aside>
+              <aside ref={chapterTreeRef} className="annotation-chapter-tree" aria-label="按大纲章节选择批注"><header><strong>选择章节</strong><span>已自动定位当前章节</span></header>{outline.map((node) => renderChapterNode(node))}</aside>
               <section ref={chapterRecordsRef} className="annotation-chapter-records">
                 <header><strong>{selectedChapterId ? `${chapterRecords.length} 条批注` : "请选择左侧章节"}</strong>{selectedChapterId && chapterRecords.length > 0 && <button type="button" onClick={() => startQuickReview("chapter")}>快速复习本章</button>}</header>
                 {chapterRecords.map((record) => (
@@ -643,6 +724,32 @@ export function AnnotationHistoryDialog({
                 ))}
               </section>
             </div>
+          )}
+
+          {view === "sprint" && (
+            <section className="annotation-sprint" aria-label="五天冲刺复习">
+              <header>
+                <div><strong>五天冲刺</strong><span>首次按章节顺序近似均分；以后新批注固定加入所属章节的这一天</span></div>
+                <button type="button" disabled={!selectedSprintRecords.length} onClick={() => startQuickReview("sprint")}>复习第 {selectedSprintDay} 天</button>
+              </header>
+              <nav className="annotation-sprint-days" aria-label="选择冲刺天数">
+                {FIVE_DAY_SPRINT_DAYS.map((day) => (
+                  <button type="button" className={selectedSprintDay === day ? "is-active" : ""} onClick={() => setSelectedSprintDay(day)} key={day}>
+                    <span>第 {day} 天</span><strong>{sprintRecordsByDay[day].length} 条</strong>
+                  </button>
+                ))}
+              </nav>
+              {!selectedSprintRecords.length && <p className="annotation-calendar-no-records">这一天暂无批注</p>}
+              <div className="annotation-sprint-records">
+                {selectedSprintRecords.map((record) => (
+                  <article className={`annotation-review-library-card ${record.id === lastVisitedRecordId ? "is-last-visited" : ""}`} key={record.id}>
+                    <div><button type="button" onClick={() => visitRecord(record, true)}><strong><HighlightedEntryText text={record.entryText} ranges={record.entryTextHighlights} entryId={record.entryId} versionId={record.versionId} /></strong><span>第 {record.page} 页 ›</span></button></div>
+                    <InlineNoteEditor key={record.id} record={record} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} />
+                    <small>{record.outlinePath.map((item) => item.title).join(" › ")}</small>
+                  </article>
+                ))}
+              </div>
+            </section>
           )}
 
           {view === "library" && (
@@ -665,7 +772,7 @@ export function AnnotationHistoryDialog({
           {view === "quick" && (
             <section className="annotation-quick-review" aria-live="polite">
               {currentQuickRecord ? <>
-                <header><div className="annotation-quick-progress"><span>{safeQuickIndex + 1} / {quickRecords.length}</span><form onSubmit={(event) => { event.preventDefault(); submitQuickJump(); }}><label>快速跳到第<input aria-label="快速跳到第几条" inputMode="numeric" pattern="[0-9]*" value={quickJumpDraft} onChange={(event) => setQuickJumpDraft(event.target.value.replace(/\D/g, ""))} onFocus={(event) => event.currentTarget.select()} onBlur={submitQuickJump} />条</label></form></div><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
+                <header><div className="annotation-quick-progress"><span>{safeQuickIndex + 1} / {quickRecords.length}</span><form onSubmit={(event) => { event.preventDefault(); submitQuickJump(); }}><label>快速跳到第<input aria-label="快速跳到第几条" inputMode="numeric" pattern="[0-9]*" value={quickJumpDraft} onChange={(event) => setQuickJumpDraft(event.target.value.replace(/\D/g, ""))} onFocus={(event) => event.currentTarget.select()} onBlur={submitQuickJump} />条</label></form></div><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : quickScope === "sprint" ? `冲刺第 ${selectedSprintDay} 天` : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
                 <div className="annotation-quick-source"><strong><HighlightedEntryText text={currentQuickRecord.entryText} ranges={currentQuickRecord.entryTextHighlights} entryId={currentQuickRecord.entryId} versionId={currentQuickRecord.versionId} /></strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
                 <div className="annotation-quick-note"><InlineNoteEditor key={currentQuickRecord.id} record={currentQuickRecord} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} /></div>
                 <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>

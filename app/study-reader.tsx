@@ -23,6 +23,10 @@ import {
 } from "./entry-highlight-text";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
 import { APP_NAMESPACE, STORAGE_KEYS, VERSION_ID_PREFIX, withBasePath } from "./lib/app-config";
+import {
+  normalizeFiveDaySprintPlan,
+  type FiveDaySprintPlan,
+} from "./lib/five-day-sprint";
 import { normalizeAnnotationUpdatedAt } from "./lib/annotation-sync";
 import { shortcutKey } from "./lib/keyboard-shortcuts";
 import type { KnowledgeEntry } from "./lib/knowledge-search";
@@ -847,6 +851,7 @@ export function StudyReader() {
   const [activeVersionId, setActiveVersionId] = useState("");
   const [activeVersionUpdatedAt, setActiveVersionUpdatedAt] = useState(INITIAL_UPDATED_AT);
   const [versionsHydrated, setVersionsHydrated] = useState(false);
+  const [fiveDaySprintPlan, setFiveDaySprintPlan] = useState<FiveDaySprintPlan | null>(null);
   const [versionDialog, setVersionDialog] = useState<"create" | "delete" | null>(null);
   const [versionNameDraft, setVersionNameDraft] = useState("");
   const [pendingSelection, setPendingSelection] = useState<string[]>([]);
@@ -951,10 +956,15 @@ export function StudyReader() {
     lastId: string;
   } | null>(null);
   const versionsRef = useRef(versions);
+  const fiveDaySprintPlanRef = useRef(fiveDaySprintPlan);
 
   useEffect(() => {
     versionsRef.current = versions;
   }, [versions]);
+
+  useEffect(() => {
+    fiveDaySprintPlanRef.current = fiveDaySprintPlan;
+  }, [fiveDaySprintPlan]);
 
   const commitVersionsDurably = useCallback(
     (update: StudyVersion[] | ((current: StudyVersion[]) => StudyVersion[])) => {
@@ -979,14 +989,32 @@ export function StudyReader() {
     [],
   );
 
+  const commitFiveDaySprintPlanDurably = useCallback((plan: FiveDaySprintPlan) => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.fiveDaySprint, JSON.stringify(plan));
+    } catch {
+      setToast("本地保存失败，五天冲刺计划未创建；原批注没有变化");
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(""), 6_000);
+      return false;
+    }
+    fiveDaySprintPlanRef.current = plan;
+    setFiveDaySprintPlan(plan);
+    return true;
+  }, []);
+
   const cloud = useCloudSync({
     versions,
+    versionsRef,
     activeVersionId,
     activeVersionUpdatedAt,
+    fiveDaySprintPlan,
+    fiveDaySprintPlanRef,
     hydrated: versionsHydrated,
     setVersions,
     setActiveVersionId,
     setActiveVersionUpdatedAt,
+    setFiveDaySprintPlan,
   });
 
   const activeVersion = versions.find((version) => version.id === activeVersionId) ?? null;
@@ -1071,6 +1099,7 @@ export function StudyReader() {
     let loadedVersions: StudyVersion[] = [];
     let loadedActiveVersionId = "";
     let loadedActiveVersionUpdatedAt = INITIAL_UPDATED_AT;
+    let loadedFiveDaySprintPlan: FiveDaySprintPlan | null = null;
 
     try {
       const storedLibrary = window.localStorage.getItem(STORAGE_KEYS.library);
@@ -1092,6 +1121,9 @@ export function StudyReader() {
             ? parsed.updatedAt
             : INITIAL_UPDATED_AT;
       }
+      loadedFiveDaySprintPlan = normalizeFiveDaySprintPlan(
+        JSON.parse(window.localStorage.getItem(STORAGE_KEYS.fiveDaySprint) ?? "null"),
+      );
     } catch {
       // A damaged project-scoped payload falls back to a fresh local version.
     }
@@ -1124,7 +1156,9 @@ export function StudyReader() {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
+      fiveDaySprintPlanRef.current = loadedFiveDaySprintPlan;
       setVersions(loadedVersions);
+      setFiveDaySprintPlan(loadedFiveDaySprintPlan);
       setActiveVersionId(activeVersionExists ? loadedActiveVersionId : loadedVersions[0].id);
       setActiveVersionUpdatedAt(loadedActiveVersionUpdatedAt);
       setVersionsHydrated(true);
@@ -3518,6 +3552,9 @@ export function StudyReader() {
         open={annotationHistoryOpen}
         records={annotationRecords}
         reviewRecordsByLevel={reviewRecordsByLevel}
+        fiveDaySprintPlan={fiveDaySprintPlan}
+        onCreateFiveDaySprintPlan={commitFiveDaySprintPlanDurably}
+        currentOutlineNodeId={outlinePathForLocation(OUTLINE, currentPage, 0.46).at(-1)?.id ?? null}
         onClose={() => setAnnotationHistoryOpen(false)}
         onJump={jumpToAnnotation}
         onUpdateNote={updateAnnotationRecord}

@@ -3055,6 +3055,25 @@ kbd {
   border-radius: 13px;
 }
 
+.annotation-history-sprint-launch {
+  display: flex;
+  min-width: 76px;
+  padding: 9px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(175, 82, 222, 0.1);
+  border-radius: 13px;
+  cursor: pointer;
+}
+
+.annotation-history-sprint-launch:hover {
+  background: rgba(175, 82, 222, 0.08);
+  border-color: rgba(154, 68, 191, 0.24);
+}
+
 .annotation-history-summary strong {
   color: #7e339f;
   font-size: 19px;
@@ -3522,6 +3541,7 @@ kbd {
 .annotation-history-modes {
   display: flex;
   padding: 3px;
+  overflow-x: auto;
   gap: 3px;
   background: rgba(118, 118, 128, 0.09);
   border-radius: 12px;
@@ -3570,6 +3590,7 @@ kbd {
 }
 
 .annotation-history-content.is-chapter,
+.annotation-history-content.is-sprint,
 .annotation-history-content.is-quick,
 .annotation-history-content.is-library {
   padding: 16px 2px 2px;
@@ -3728,6 +3749,113 @@ kbd {
 .annotation-reading-card small {
   color: #8e8e93;
   font-size: 9px;
+}
+
+.annotation-sprint {
+  width: min(920px, 100%);
+  margin: 0 auto;
+}
+
+.annotation-sprint > header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  margin-bottom: 12px;
+  padding: 11px 13px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: rgba(249, 249, 252, 0.95);
+  border: 1px solid rgba(175, 82, 222, 0.11);
+  border-radius: 14px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.annotation-sprint > header div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.annotation-sprint > header strong {
+  color: #4a2b53;
+  font-size: 14px;
+}
+
+.annotation-sprint > header span {
+  color: #8e8e93;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.annotation-sprint > header button {
+  min-width: 94px;
+  height: 34px;
+  padding: 0 12px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 720;
+  background: #9540b7;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.annotation-sprint > header button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.annotation-sprint-days {
+  display: grid;
+  margin-bottom: 12px;
+  padding: 6px;
+  overflow-x: auto;
+  grid-template-columns: repeat(5, minmax(104px, 1fr));
+  gap: 6px;
+  background: rgba(175, 82, 222, 0.055);
+  border: 1px solid rgba(175, 82, 222, 0.09);
+  border-radius: 14px;
+}
+
+.annotation-sprint-days button {
+  display: flex;
+  min-height: 46px;
+  padding: 7px 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  color: #6e6e73;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.annotation-sprint-days button span {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.annotation-sprint-days button strong {
+  color: #8b3bb0;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.annotation-sprint-days button.is-active {
+  color: #71308f;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 9px rgba(100, 44, 124, 0.11);
+}
+
+.annotation-sprint-records {
+  min-height: 0;
 }
 
 .annotation-quick-review {
@@ -3996,6 +4124,11 @@ kbd {
   border-radius: 14px;
 }
 
+.annotation-review-library-card.is-last-visited {
+  border-color: rgba(154, 68, 191, 0.65);
+  box-shadow: 0 0 0 3px rgba(175, 82, 222, 0.11);
+}
+
 .annotation-review-library-card > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4097,7 +4230,9 @@ kbd {
 }
 
 .annotation-review-library-card > .annotation-inline-note-display,
-.annotation-review-library-card > .annotation-inline-note-editor {
+.annotation-review-library-card > .annotation-inline-note-editor,
+.annotation-sprint-records .annotation-inline-note-display,
+.annotation-sprint-records .annotation-inline-note-editor {
   margin: 10px 0;
   font-size: calc(13px * var(--note-font-scale, 1));
   line-height: 1.65;
@@ -4120,6 +4255,7 @@ kbd {
 
 .annotation-history-sheet.is-mini .annotation-history-content.is-quick,
 .annotation-history-sheet.is-mini .annotation-history-content.is-chapter,
+.annotation-history-sheet.is-mini .annotation-history-content.is-sprint,
 .annotation-history-sheet.is-mini .annotation-history-content.is-library {
   padding: 10px;
 }

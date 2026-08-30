@@ -91,3 +91,15 @@ test("critical study edits are durable before a sync cursor can advance", async 
   const cursorAdvance = sync.indexOf("cursorRef.current = confirmed.cursor", sync.indexOf("const performSync"));
   assert.ok(mergeWrite >= 0 && cursorAdvance > mergeWrite);
 });
+
+test("a cloud sync finishing after a highlight always reconciles against the newest durable memory", async () => {
+  const [reader, sync] = await Promise.all([
+    source("app/study-reader.tsx"),
+    source("app/lib/use-cloud-sync.ts"),
+  ]);
+  assert.match(reader, /commitVersionsDurably[\s\S]*?versionsRef\.current = next;[\s\S]*?setVersions\(next\)/);
+  assert.match(sync, /const currentVersions = latestInputs\.current\.versionsRef\.current/);
+  assert.match(sync, /reconcileVersionSnapshots\(currentVersions, nextVersions/);
+  assert.match(sync, /setters\.versionsRef\.current = reconciled;[\s\S]*?setters\.setVersions\(reconciled\)/);
+  assert.doesNotMatch(sync, /reconcileVersionSnapshots\(latestInputs\.current\.versions,/);
+});

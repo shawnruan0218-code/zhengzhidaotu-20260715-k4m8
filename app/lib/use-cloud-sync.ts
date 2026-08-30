@@ -2,6 +2,7 @@
 
 import {
   type Dispatch,
+  type MutableRefObject,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -29,6 +30,10 @@ import {
   readCloudflareSession,
   type CloudflareUser,
 } from "./cloudflare-client";
+import {
+  normalizeFiveDaySprintPlan,
+  type FiveDaySprintPlan,
+} from "./five-day-sprint";
 import { normalizeReviewItems } from "./review-library";
 import type {
   NoteHighlightRange,
@@ -57,12 +62,16 @@ export type SyncStatus =
 
 type SyncInputs = {
   versions: StudyVersion[];
+  versionsRef: MutableRefObject<StudyVersion[]>;
   activeVersionId: string;
   activeVersionUpdatedAt: string;
+  fiveDaySprintPlan: FiveDaySprintPlan | null;
+  fiveDaySprintPlanRef: MutableRefObject<FiveDaySprintPlan | null>;
   hydrated: boolean;
   setVersions: Dispatch<SetStateAction<StudyVersion[]>>;
   setActiveVersionId: Dispatch<SetStateAction<string>>;
   setActiveVersionUpdatedAt: Dispatch<SetStateAction<string>>;
+  setFiveDaySprintPlan: Dispatch<SetStateAction<FiveDaySprintPlan | null>>;
 };
 
 export type CloudSyncController = {
@@ -215,6 +224,20 @@ function activeVersionRecord(userId: string, activeVersionId: string, updatedAt:
   };
 }
 
+function fiveDaySprintRecord(userId: string, plan: FiveDaySprintPlan): SyncRecord {
+  const itemKey = scopedItemKey("setting:five-day-sprint");
+  return {
+    id: `${userId}::${itemKey}`,
+    user_id: userId,
+    item_key: itemKey,
+    item_type: "five_day_sprint",
+    item_data: plan as unknown as Record<string, unknown>,
+    added_at: plan.createdAt,
+    updated_at: plan.updatedAt,
+    deleted_at: null,
+  };
+}
+
 function tombstoneRecord(userId: string, itemKey: string, tombstone: Tombstone): SyncRecord {
   return {
     id: `${userId}::${itemKey}`,
@@ -233,6 +256,7 @@ function buildLocalRecords(
   versions: StudyVersion[],
   activeVersionId: string,
   activeVersionUpdatedAt: string,
+  fiveDaySprintPlan: FiveDaySprintPlan | null,
   tombstones: Record<string, Tombstone>,
 ): SyncRecord[] {
   const records = [
@@ -241,6 +265,7 @@ function buildLocalRecords(
       annotationSyncEntryIds(version).map((entryId) => annotationRecord(userId, version, entryId)),
     ),
     activeVersionRecord(userId, activeVersionId, activeVersionUpdatedAt),
+    ...(fiveDaySprintPlan ? [fiveDaySprintRecord(userId, fiveDaySprintPlan)] : []),
   ];
   const byKey = new Map(records.map((record) => [record.item_key, record]));
   for (const [itemKey, tombstone] of Object.entries(tombstones)) {
@@ -498,6 +523,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
     const nextTombstones: Record<string, Tombstone> = {};
     const versionItemPrefix = scopedItemKey("version:");
     let activeRecord: SyncRecord | null = null;
+    let nextFiveDaySprintPlan: FiveDaySprintPlan | null = null;
     for (const record of records) {
       if (record.deleted_at) {
         nextTombstones[record.item_key] = {
@@ -513,9 +539,14 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         if (annotation) annotationSnapshots.push(annotation);
       } else if (record.item_type === "active_version") {
         activeRecord = record;
+      } else if (record.item_type === "five_day_sprint") {
+        nextFiveDaySprintPlan = normalizeFiveDaySprintPlan(record.item_data);
       }
     }
-    if (!nextVersions.length && !annotationSnapshots.length) return latestInputs.current.versions;
+    const currentVersions = latestInputs.current.versionsRef.current;
+    if (!nextVersions.length && !annotationSnapshots.length && !nextFiveDaySprintPlan) {
+      return currentVersions;
+    }
     const reconciledTombstones = { ...nextTombstones };
     for (const [itemKey, local] of Object.entries(tombstonesRef.current)) {
       const remote = reconciledTombstones[itemKey];
@@ -530,8 +561,8 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         .map(([key, tombstone]) => [key.slice(versionItemPrefix.length), tombstone.updatedAt]),
     );
     let reconciled = nextVersions.length
-      ? reconcileVersionSnapshots(latestInputs.current.versions, nextVersions, deletedVersionUpdates)
-      : latestInputs.current.versions;
+      ? reconcileVersionSnapshots(currentVersions, nextVersions, deletedVersionUpdates)
+      : currentVersions;
     if (annotationSnapshots.length) {
       const snapshotsByVersion = new Map<string, AnnotationSyncSnapshot[]>();
       annotationSnapshots.forEach((snapshot) => {
@@ -571,19 +602,32 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
         updatedAt: activeUpdatedAt,
       } satisfies StoredSettings),
     );
+    if (nextFiveDaySprintPlan) {
+      window.localStorage.setItem(
+        STORAGE_KEYS.fiveDaySprint,
+        JSON.stringify(nextFiveDaySprintPlan),
+      );
+    }
 
     tombstonesRef.current = reconciledTombstones;
     const setters = latestInputs.current;
+    setters.versionsRef.current = reconciled;
+    setters.fiveDaySprintPlanRef.current = nextFiveDaySprintPlan ?? setters.fiveDaySprintPlanRef.current;
     latestInputs.current = {
       ...setters,
       versions: reconciled,
       activeVersionId: activeId,
       activeVersionUpdatedAt: activeUpdatedAt,
+      fiveDaySprintPlan: nextFiveDaySprintPlan ?? setters.fiveDaySprintPlan,
     };
     setters.setVersions(reconciled);
     setters.setActiveVersionId((current) => current === activeId ? current : activeId);
     setters.setActiveVersionUpdatedAt((current) =>
       current === activeUpdatedAt ? current : activeUpdatedAt);
+    if (nextFiveDaySprintPlan) {
+      setters.setFiveDaySprintPlan((current) =>
+        current?.updatedAt === nextFiveDaySprintPlan?.updatedAt ? current : nextFiveDaySprintPlan);
+    }
     return reconciled;
   }, []);
 
@@ -601,9 +645,10 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
       });
       const localRecords = buildLocalRecords(
         user.id,
-        latestInputs.current.versions,
+        latestInputs.current.versionsRef.current,
         latestInputs.current.activeVersionId,
         latestInputs.current.activeVersionUpdatedAt,
+        latestInputs.current.fiveDaySprintPlanRef.current,
         tombstonesRef.current,
       );
       const merged = mergeRecordSets(localRecords, firstPull.records)
@@ -673,6 +718,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
   }, [
     inputs.activeVersionId,
     inputs.activeVersionUpdatedAt,
+    inputs.fiveDaySprintPlan,
     inputs.hydrated,
     inputs.versions,
     syncNow,
@@ -712,7 +758,7 @@ export function useCloudSync(inputs: SyncInputs): CloudSyncController {
   }, []);
 
   const markVersionDeleted = useCallback((versionId: string) => {
-    const updatedAt = latestInputs.current.versions.find((version) => version.id === versionId)?.updatedAt;
+    const updatedAt = latestInputs.current.versionsRef.current.find((version) => version.id === versionId)?.updatedAt;
     const timestamp = nextIsoTimestamp(updatedAt);
     const itemKey = scopedItemKey(`version:${versionId}`);
     tombstonesRef.current = {
