@@ -18,7 +18,7 @@ import {
 } from "./annotation-history-dialog";
 import { BatchKnowledgeSearchPanel } from "./batch-knowledge-search-panel";
 import {
-  clearRememberedEntryText,
+  clearRememberedEntryTextAfterPaint,
   type SelectedEntryText,
 } from "./entry-highlight-text";
 import { KnowledgeSearchPanel } from "./knowledge-search-panel";
@@ -62,7 +62,7 @@ import {
 } from "./lib/study-types";
 import { useCloudSync } from "./lib/use-cloud-sync";
 import {
-  clearRememberedNoteText,
+  clearRememberedNoteTextAfterPaint,
   HighlightedNoteText,
   readSelectedNoteText,
   type SelectedNoteText,
@@ -98,6 +98,19 @@ type OCRPage = {
 
 type ReadingMode = "scroll" | "page";
 type InteractionMode = "highlight" | "entry";
+
+function mapVersionsIfChanged(
+  current: StudyVersion[],
+  update: (version: StudyVersion) => StudyVersion,
+) {
+  let changed = false;
+  const next = current.map((version) => {
+    const updated = update(version);
+    if (updated !== version) changed = true;
+    return updated;
+  });
+  return changed ? next : current;
+}
 
 type EntrySegment = {
   x: number;
@@ -961,6 +974,8 @@ export function StudyReader() {
     lastId: string;
   } | null>(null);
   const versionsRef = useRef(versions);
+  const versionsPaintFrameRef = useRef<number | null>(null);
+  const versionsCommitFrameRef = useRef<number | null>(null);
   const fiveDaySprintPlanRef = useRef(fiveDaySprintPlan);
   const reviewBookmarkRef = useRef(reviewBookmark);
 
@@ -976,8 +991,27 @@ export function StudyReader() {
     reviewBookmarkRef.current = reviewBookmark;
   }, [reviewBookmark]);
 
+  const scheduleVersionsRenderAfterPaint = useCallback(() => {
+    if (versionsPaintFrameRef.current !== null || versionsCommitFrameRef.current !== null) return;
+    versionsPaintFrameRef.current = requestAnimationFrame(() => {
+      versionsPaintFrameRef.current = null;
+      versionsCommitFrameRef.current = requestAnimationFrame(() => {
+        versionsCommitFrameRef.current = null;
+        setVersions(versionsRef.current);
+      });
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (versionsPaintFrameRef.current !== null) cancelAnimationFrame(versionsPaintFrameRef.current);
+    if (versionsCommitFrameRef.current !== null) cancelAnimationFrame(versionsCommitFrameRef.current);
+  }, []);
+
   const commitVersionsDurably = useCallback(
-    (update: StudyVersion[] | ((current: StudyVersion[]) => StudyVersion[])) => {
+    (
+      update: StudyVersion[] | ((current: StudyVersion[]) => StudyVersion[]),
+      options: { afterPaint?: boolean } = {},
+    ) => {
       const current = versionsRef.current;
       const next = typeof update === "function" ? update(current) : update;
       if (next === current) return true;
@@ -993,10 +1027,18 @@ export function StudyReader() {
         return false;
       }
       versionsRef.current = next;
-      setVersions(next);
+      if (options.afterPaint) {
+        scheduleVersionsRenderAfterPaint();
+      } else {
+        if (versionsPaintFrameRef.current !== null) cancelAnimationFrame(versionsPaintFrameRef.current);
+        if (versionsCommitFrameRef.current !== null) cancelAnimationFrame(versionsCommitFrameRef.current);
+        versionsPaintFrameRef.current = null;
+        versionsCommitFrameRef.current = null;
+        setVersions(next);
+      }
       return true;
     },
-    [],
+    [scheduleVersionsRenderAfterPaint],
   );
 
   const commitFiveDaySprintPlanDurably = useCallback((plan: FiveDaySprintPlan) => {
@@ -1205,10 +1247,6 @@ export function StudyReader() {
     if (!versionsHydrated || !activeVersionId || !versions.length) return;
     try {
       window.localStorage.setItem(
-        STORAGE_KEYS.library,
-        JSON.stringify({ schemaVersion: 1, versions } satisfies StoredLibrary),
-      );
-      window.localStorage.setItem(
         STORAGE_KEYS.settings,
         JSON.stringify({
           schemaVersion: 1,
@@ -1217,9 +1255,9 @@ export function StudyReader() {
         } satisfies StoredSettings),
       );
     } catch {
-      // Versions still work for the current session if local storage is unavailable.
+      // Study changes are already saved by the durable commit path.
     }
-  }, [activeVersionId, activeVersionUpdatedAt, versions, versionsHydrated]);
+  }, [activeVersionId, activeVersionUpdatedAt, versions.length, versionsHydrated]);
 
   useEffect(() => {
     if (!versionsHydrated) return;
@@ -1340,6 +1378,12 @@ export function StudyReader() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 1800);
   }, []);
+
+  const showToastAfterPaint = useCallback((message: string) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => showToast(message));
+    });
+  }, [showToast]);
 
   const commitZoom = useCallback((value: number) => {
     const nextZoom = clampZoom(value);
@@ -1629,7 +1673,7 @@ export function StudyReader() {
   const addNoteTextHighlight = useCallback(
     (selection: SelectedNoteText) => {
       const committed = commitVersionsDurably((current) =>
-        current.map((version) => {
+        mapVersionsIfChanged(current, (version) => {
           if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
             return version;
           }
@@ -1664,18 +1708,18 @@ export function StudyReader() {
             updatedAt,
           };
         }),
+        { afterPaint: true },
       );
       if (!committed) return;
-      window.getSelection()?.removeAllRanges();
-      clearRememberedNoteText();
-      showToast("已高亮批注中的选中文字");
+      clearRememberedNoteTextAfterPaint();
+      showToastAfterPaint("已高亮批注中的选中文字");
     },
-    [commitVersionsDurably, showToast],
+    [commitVersionsDurably, showToastAfterPaint],
   );
 
   const removeSelectedNoteTextHighlight = useCallback(
     (selection: SelectedNoteText) => {
-      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const selectedVersion = versionsRef.current.find((version) => version.id === selection.versionId);
       const preview = selectedVersion?.notes[selection.entryId]
         ? removeNoteHighlightSelection(
             selectedVersion.notes[selection.entryId],
@@ -1684,7 +1728,7 @@ export function StudyReader() {
           )
         : null;
       const committed = commitVersionsDurably((current) =>
-        current.map((version) => {
+        mapVersionsIfChanged(current, (version) => {
           if (version.id !== selection.versionId || !version.notes[selection.entryId]) {
             return version;
           }
@@ -1710,22 +1754,22 @@ export function StudyReader() {
             updatedAt,
           };
         }),
+        { afterPaint: true },
       );
       if (!committed) return;
-      window.getSelection()?.removeAllRanges();
-      clearRememberedNoteText();
-      showToast(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
+      clearRememberedNoteTextAfterPaint();
+      showToastAfterPaint(preview?.changed ? "已取消选中文字的批注高亮" : "选中文字没有高亮");
     },
-    [commitVersionsDurably, showToast, versions],
+    [commitVersionsDurably, showToastAfterPaint],
   );
 
   const addEntryTextHighlight = useCallback(
     (selection: SelectedEntryText) => {
-      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const selectedVersion = versionsRef.current.find((version) => version.id === selection.versionId);
       const changed = Boolean(selectedVersion) && !(selectedVersion?.entryTextHighlights[selection.entryId] ?? [])
         .some((range) => range.start === selection.start && range.end === selection.end);
       const committed = commitVersionsDurably((current) =>
-        current.map((version) => {
+        mapVersionsIfChanged(current, (version) => {
           if (version.id !== selection.versionId) return version;
           const existing = version.entryTextHighlights[selection.entryId] ?? [];
           if (existing.some((range) => range.start === selection.start && range.end === selection.end)) {
@@ -1750,18 +1794,18 @@ export function StudyReader() {
             updatedAt,
           };
         }),
+        { afterPaint: true },
       );
       if (!committed) return;
-      window.getSelection()?.removeAllRanges();
-      clearRememberedEntryText();
-      showToast(changed ? "已高亮快速复习词条中的选中文字" : "这段文字已经高亮");
+      clearRememberedEntryTextAfterPaint();
+      showToastAfterPaint(changed ? "已高亮快速复习词条中的选中文字" : "这段文字已经高亮");
     },
-    [commitVersionsDurably, showToast, versions],
+    [commitVersionsDurably, showToastAfterPaint],
   );
 
   const removeSelectedEntryTextHighlight = useCallback(
     (selection: SelectedEntryText) => {
-      const selectedVersion = versions.find((version) => version.id === selection.versionId);
+      const selectedVersion = versionsRef.current.find((version) => version.id === selection.versionId);
       const preview = selectedVersion
         ? removeNoteHighlightSelection(
             selection.text,
@@ -1770,7 +1814,7 @@ export function StudyReader() {
           )
         : null;
       const committed = commitVersionsDurably((current) =>
-        current.map((version) => {
+        mapVersionsIfChanged(current, (version) => {
           if (version.id !== selection.versionId) return version;
           const result = removeNoteHighlightSelection(
             selection.text,
@@ -1794,13 +1838,13 @@ export function StudyReader() {
             updatedAt,
           };
         }),
+        { afterPaint: true },
       );
       if (!committed) return;
-      window.getSelection()?.removeAllRanges();
-      clearRememberedEntryText();
-      showToast(preview?.changed ? "已取消快速复习词条中的选中文字高亮" : "选中文字没有高亮");
+      clearRememberedEntryTextAfterPaint();
+      showToastAfterPaint(preview?.changed ? "已取消快速复习词条中的选中文字高亮" : "选中文字没有高亮");
     },
-    [commitVersionsDurably, showToast, versions],
+    [commitVersionsDurably, showToastAfterPaint],
   );
 
   const goToPage = useCallback(

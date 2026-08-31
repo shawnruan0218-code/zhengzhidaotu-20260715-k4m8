@@ -233,6 +233,7 @@ function InlineNoteEditor({
           if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f") && textarea.selectionEnd > textarea.selectionStart) {
             event.preventDefault();
             event.stopPropagation();
+            if (event.repeat) return;
             const selection = {
               entryId: record.entryId,
               versionId: record.versionId,
@@ -281,6 +282,10 @@ function InlineNoteEditor({
       onKeyDown={(event) => {
         const key = shortcutKey(event);
         if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f")) {
+          if (event.repeat) {
+            event.preventDefault();
+            return;
+          }
           const selection = readSelectedNoteText();
           if (
             selection &&
@@ -637,6 +642,10 @@ export function AnnotationHistoryDialog({
 
       const selectionKey = shortcutKey(event);
       if (!event.metaKey && !event.ctrlKey && !event.altKey && (selectionKey === "d" || selectionKey === "f")) {
+        if (event.repeat) {
+          event.preventDefault();
+          return;
+        }
         const liveSelection = window.getSelection();
         const liveElement = liveSelection?.anchorNode?.nodeType === Node.ELEMENT_NODE
           ? liveSelection.anchorNode as Element

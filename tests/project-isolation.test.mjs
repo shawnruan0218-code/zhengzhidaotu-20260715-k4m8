@@ -104,6 +104,33 @@ test("a cloud sync finishing after a highlight always reconciles against the new
   assert.doesNotMatch(sync, /reconcileVersionSnapshots\(latestInputs\.current\.versions,/);
 });
 
+test("highlight feedback paints immediately without weakening durable storage or sync", async () => {
+  const [reader, noteText, entryText, feedback, css, sync] = await Promise.all([
+    source("app/study-reader.tsx"),
+    source("app/note-highlight-text.tsx"),
+    source("app/entry-highlight-text.tsx"),
+    source("app/lib/selection-feedback.ts"),
+    source("app/globals.css"),
+    source("app/lib/use-cloud-sync.ts"),
+  ]);
+
+  const durableWrite = reader.indexOf("window.localStorage.setItem(", reader.indexOf("const commitVersionsDurably"));
+  const newestMemory = reader.indexOf("versionsRef.current = next", durableWrite);
+  const paintSchedule = reader.indexOf("scheduleVersionsRenderAfterPaint()", newestMemory);
+  assert.ok(durableWrite >= 0 && newestMemory > durableWrite && paintSchedule > newestMemory);
+  assert.equal([...reader.matchAll(/\{ afterPaint: true \}/g)].length, 4);
+  assert.equal([...reader.matchAll(/localStorage\.setItem\(\s*STORAGE_KEYS\.library/g)].length, 2);
+  assert.match(reader, /mapVersionsIfChanged[\s\S]*?return changed \? next : current/);
+  assert.match(noteText, /onPointerUp=\{\(\) => \{\s*if \(!rememberSelectedNoteText\(\)\) queueMicrotask/);
+  assert.match(entryText, /onPointerUp=\{\(\) => \{\s*if \(!rememberSelectedEntryText\(\)\) queueMicrotask/);
+  assert.match(feedback, /sameSelection[\s\S]*?requestAnimationFrame[\s\S]*?requestAnimationFrame[\s\S]*?requestAnimationFrame/);
+  assert.match(css, /\.note-highlight-text::selection[\s\S]*?background: rgba\(255, 214, 10, 0\.58\)/);
+  assert.match(css, /\.entry-highlight-text::selection[\s\S]*?background: #ffe27a/);
+  assert.match(css, /\.floating-note\.history-docked-note[\s\S]*?backdrop-filter: none/);
+  assert.match(css, /\.annotation-quick-review[\s\S]*?contain: paint/);
+  assert.match(sync, /latestInputs\.current\.versionsRef\.current/);
+});
+
 test("review bookmark is durable locally and synchronized as an independent record", async () => {
   const [reader, sync, bookmark] = await Promise.all([
     source("app/study-reader.tsx"),

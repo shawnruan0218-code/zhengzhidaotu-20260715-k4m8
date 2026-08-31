@@ -2,6 +2,7 @@
 
 import type { NoteHighlightRange } from "./lib/study-types";
 import { resolveNoteHighlightRanges } from "./lib/note-highlights";
+import { clearSelectionAfterHighlightPaint } from "./lib/selection-feedback";
 
 type Props = {
   text: string;
@@ -59,7 +60,7 @@ export function HighlightedEntryText({ text, ranges = [], entryId, versionId }: 
         rememberedSelection = null;
       }}
       onPointerUp={() => {
-        requestAnimationFrame(() => rememberSelectedEntryText());
+        if (!rememberSelectedEntryText()) queueMicrotask(() => rememberSelectedEntryText());
       }}
     >
       {pieces.length ? pieces : text}
@@ -103,6 +104,11 @@ export function rememberSelectedEntryText(): SelectedEntryText | null {
 
 export function clearRememberedEntryText(): void {
   rememberedSelection = null;
+}
+
+export function clearRememberedEntryTextAfterPaint(): void {
+  rememberedSelection = null;
+  clearSelectionAfterHighlightPaint();
 }
 
 export function readSelectedEntryText(): SelectedEntryText | null {

@@ -1263,6 +1263,10 @@ kbd {
   z-index: 98;
   top: 18px;
   width: min(var(--floating-note-width, 440px), calc(100vw - 32px));
+  contain: paint;
+  background: rgba(255, 255, 255, 0.985);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: none;
   transition: left 120ms ease-out, top 120ms ease-out, width 120ms ease-out;
 }
@@ -2233,6 +2237,12 @@ kbd {
   white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
+}
+
+.note-highlight-text::selection,
+.annotation-inline-note-display::selection {
+  color: inherit;
+  background: rgba(255, 214, 10, 0.58);
 }
 
 .note-highlight-text mark {
@@ -3904,6 +3914,7 @@ kbd {
   width: min(760px, 100%);
   margin: 0 auto;
   padding: 20px;
+  contain: paint;
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(175, 82, 222, 0.14);
   border-radius: 18px;
@@ -4030,6 +4041,11 @@ kbd {
 .entry-highlight-text {
   user-select: text;
   -webkit-user-select: text;
+}
+
+.entry-highlight-text::selection {
+  color: inherit;
+  background: #ffe27a;
 }
 
 .entry-highlight-text mark {
