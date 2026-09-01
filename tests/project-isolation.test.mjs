@@ -118,7 +118,12 @@ test("highlight feedback paints immediately without weakening durable storage or
   const durableWrite = reader.indexOf("window.localStorage.setItem(", reader.indexOf("const commitVersionsDurably"));
   const newestMemory = reader.indexOf("versionsRef.current = next", durableWrite);
   const paintSchedule = reader.indexOf("scheduleVersionsRenderAfterPaint()", newestMemory);
+  const renderScheduler = reader.slice(
+    reader.indexOf("const scheduleVersionsRenderAfterPaint"),
+    reader.indexOf("const commitVersionsDurably"),
+  );
   assert.ok(durableWrite >= 0 && newestMemory > durableWrite && paintSchedule > newestMemory);
+  assert.equal([...renderScheduler.matchAll(/requestAnimationFrame/g)].length, 1);
   assert.equal([...reader.matchAll(/\{ afterPaint: true \}/g)].length, 4);
   assert.equal([...reader.matchAll(/localStorage\.setItem\(\s*STORAGE_KEYS\.library/g)].length, 2);
   assert.match(reader, /mapVersionsIfChanged[\s\S]*?return changed \? next : current/);
@@ -132,6 +137,27 @@ test("highlight feedback paints immediately without weakening durable storage or
   assert.match(css, /\.floating-note\.history-docked-note[\s\S]*?backdrop-filter: none/);
   assert.match(css, /\.annotation-quick-review[\s\S]*?contain: layout paint style/);
   assert.match(sync, /latestInputs\.current\.versionsRef\.current/);
+});
+
+test("quick review pre-renders nearby cards and defers coalesced background navigation", async () => {
+  const [reader, history, css] = await Promise.all([
+    source("app/study-reader.tsx"),
+    source("app/annotation-history-dialog.tsx"),
+    source("app/globals.css"),
+  ]);
+
+  assert.match(history, /quickRenderBlock[\s\S]*?quickRecords\.slice\(quickRenderStart, quickRenderEnd\)/);
+  assert.match(history, /className="annotation-quick-card-buffer"[\s\S]*?<QuickReviewCard/);
+  assert.match(history, /setQuickIndex\(bounded\)[\s\S]*?scheduleQuickNavigation\(quickRecords\[bounded\]\)/);
+  assert.match(history, /pendingQuickNavigationRef[\s\S]*?requestAnimationFrame[\s\S]*?setTimeout/);
+  assert.match(history, /selection && !selection\.isCollapsed[\s\S]*?setTimeout\(completeWhenSelectionIsIdle/);
+  assert.match(reader, /revealAnnotationEntry\(entry, options\?\.fast \? "auto" : "smooth"\)/);
+  assert.match(reader, /if \(!options\?\.fast\) showToast/);
+  assert.match(reader, /addEventListener\("scroll", schedulePlaceNote/);
+  assert.doesNotMatch(reader, /addEventListener\("scroll", placeNote/);
+  assert.equal([...reader.matchAll(/\?\? EMPTY_HIGHLIGHT_RANGES/g)].length, 4);
+  assert.match(css, /\.annotation-quick-card\.is-buffered[\s\S]*?visibility: hidden/);
+  assert.equal([...reader.matchAll(/localStorage\.setItem\(\s*STORAGE_KEYS\.library/g)].length, 2);
 });
 
 test("review bookmark is durable locally and synchronized as an independent record", async () => {

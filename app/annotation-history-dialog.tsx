@@ -4,6 +4,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type UIEvent,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -69,7 +70,7 @@ type Props = {
   noteFontScale: number;
   onNoteFontScaleChange: (scale: number) => void;
   onClose: () => void;
-  onJump: (record: AnnotationRecord, options?: { showNote?: boolean }) => void;
+  onJump: (record: AnnotationRecord, options?: { showNote?: boolean; fast?: boolean }) => void;
   onUpdateNote: (record: AnnotationRecord, note: string) => void;
   onAddToReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
   onRemoveFromReview: (record: AnnotationRecord, level: ReviewLibraryLevel) => void;
@@ -309,6 +310,56 @@ function InlineNoteEditor({
   );
 }
 
+type QuickReviewCardProps = {
+  record: AnnotationRecord;
+  onVisit: (record: AnnotationRecord, showNote?: boolean, fast?: boolean) => void;
+  onUpdateNote: Props["onUpdateNote"];
+  onHighlightNote: Props["onHighlightNote"];
+  onRemoveNoteHighlight: Props["onRemoveNoteHighlight"];
+};
+
+const QuickReviewCard = memo(function QuickReviewCard({
+  record,
+  onVisit,
+  onUpdateNote,
+  onHighlightNote,
+  onRemoveNoteHighlight,
+}: QuickReviewCardProps) {
+  return (
+    <>
+      <div className="annotation-quick-source">
+        <strong>
+          <HighlightedEntryText
+            text={record.entryText}
+            ranges={record.entryTextHighlights}
+            entryId={record.entryId}
+            versionId={record.versionId}
+          />
+        </strong>
+        <button type="button" onClick={() => onVisit(record, true)}>第 {record.page} 页 ›</button>
+      </div>
+      <div className="annotation-quick-note">
+        <InlineNoteEditor
+          record={record}
+          onSave={onUpdateNote}
+          onHighlight={onHighlightNote}
+          onRemoveHighlight={onRemoveNoteHighlight}
+        />
+      </div>
+    </>
+  );
+}, (previous, next) => (
+  previous.record.id === next.record.id &&
+  previous.record.entryText === next.record.entryText &&
+  previous.record.note === next.record.note &&
+  previous.record.entryTextHighlights === next.record.entryTextHighlights &&
+  previous.record.noteHighlights === next.record.noteHighlights &&
+  previous.onVisit === next.onVisit &&
+  previous.onUpdateNote === next.onUpdateNote &&
+  previous.onHighlightNote === next.onHighlightNote &&
+  previous.onRemoveNoteHighlight === next.onRemoveNoteHighlight
+));
+
 export function AnnotationHistoryDialog({
   open,
   records,
@@ -350,6 +401,9 @@ export function AnnotationHistoryDialog({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const quickIndexRef = useRef(0);
+  const quickNavigationFrameRef = useRef<number | null>(null);
+  const quickNavigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingQuickNavigationRef = useRef<AnnotationRecord | null>(null);
   const todayReviewStateRef = useRef(todayReviewState);
   const chapterRecordsRef = useRef<HTMLElement | null>(null);
   const chapterTreeRef = useRef<HTMLElement | null>(null);
@@ -398,6 +452,13 @@ export function AnnotationHistoryDialog({
   );
   const safeQuickIndex = Math.min(quickIndex, Math.max(0, quickRecords.length - 1));
   const currentQuickRecord = quickRecords[safeQuickIndex] ?? null;
+  const quickRenderBlock = Math.floor(safeQuickIndex / 8);
+  const quickRenderStart = Math.max(0, quickRenderBlock * 8 - 3);
+  const quickRenderEnd = Math.min(quickRecords.length, quickRenderBlock * 8 + 12);
+  const quickRenderRecords = useMemo(
+    () => quickRecords.slice(quickRenderStart, quickRenderEnd),
+    [quickRecords, quickRenderEnd, quickRenderStart],
+  );
   const isCurrentQuickRecordBookmarked = Boolean(
     reviewBookmark && currentQuickRecord && (
       reviewBookmark.recordId === currentQuickRecord.id ||
@@ -492,10 +553,54 @@ export function AnnotationHistoryDialog({
     setMiniMode(true);
   };
 
-  const visitRecord = useCallback((record: AnnotationRecord, showNote = false) => {
+  const visitRecord = useCallback((record: AnnotationRecord, showNote = false, fast = false) => {
     setLastVisitedRecordId(record.id);
-    onJump(record, { showNote });
+    onJump(record, { showNote, fast });
   }, [onJump]);
+
+  const cancelQuickNavigation = useCallback(() => {
+    if (quickNavigationFrameRef.current !== null) {
+      cancelAnimationFrame(quickNavigationFrameRef.current);
+      quickNavigationFrameRef.current = null;
+    }
+    if (quickNavigationTimerRef.current !== null) {
+      clearTimeout(quickNavigationTimerRef.current);
+      quickNavigationTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleQuickNavigation = useCallback((record: AnnotationRecord) => {
+    pendingQuickNavigationRef.current = record;
+    cancelQuickNavigation();
+    const completeWhenSelectionIsIdle = () => {
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) {
+        quickNavigationTimerRef.current = setTimeout(completeWhenSelectionIsIdle, 64);
+        return;
+      }
+      quickNavigationTimerRef.current = null;
+      const pending = pendingQuickNavigationRef.current;
+      pendingQuickNavigationRef.current = null;
+      if (pending) visitRecord(pending, true, true);
+    };
+    quickNavigationFrameRef.current = requestAnimationFrame(() => {
+      quickNavigationFrameRef.current = requestAnimationFrame(() => {
+        quickNavigationFrameRef.current = null;
+        quickNavigationTimerRef.current = setTimeout(completeWhenSelectionIsIdle, 64);
+      });
+    });
+  }, [cancelQuickNavigation, visitRecord]);
+
+  useEffect(() => () => {
+    cancelQuickNavigation();
+    pendingQuickNavigationRef.current = null;
+  }, [cancelQuickNavigation]);
+
+  useEffect(() => {
+    if (open && view === "quick") return;
+    cancelQuickNavigation();
+    pendingQuickNavigationRef.current = null;
+  }, [cancelQuickNavigation, open, view]);
 
   const markQuickRecordViewed = useCallback((record: AnnotationRecord) => {
     const day = localDayKey(new Date().toISOString());
@@ -516,8 +621,8 @@ export function AnnotationHistoryDialog({
     setQuickIndex(bounded);
     setQuickJumpDraft(String(bounded + 1));
     markQuickRecordViewed(quickRecords[bounded]);
-    visitRecord(quickRecords[bounded], true);
-  }, [markQuickRecordViewed, quickRecords, visitRecord]);
+    scheduleQuickNavigation(quickRecords[bounded]);
+  }, [markQuickRecordViewed, quickRecords, scheduleQuickNavigation]);
 
   const submitQuickJump = useCallback(() => {
     const requested = Number.parseInt(quickJumpDraft, 10);
@@ -558,7 +663,7 @@ export function AnnotationHistoryDialog({
     setQuickIndex(initialIndex);
     setQuickJumpDraft(String(initialIndex + 1));
     markQuickRecordViewed(scopedRecords[initialIndex]);
-    visitRecord(scopedRecords[initialIndex], true);
+    scheduleQuickNavigation(scopedRecords[initialIndex]);
   };
 
   const currentReviewBookmarkScope = (): ReviewBookmarkScope => {
@@ -852,8 +957,22 @@ export function AnnotationHistoryDialog({
             <section className="annotation-quick-review" aria-live="polite">
               {currentQuickRecord ? <>
                 <header><div className="annotation-quick-progress"><span>{safeQuickIndex + 1} / {quickRecords.length}</span><form onSubmit={(event) => { event.preventDefault(); submitQuickJump(); }}><label>快速跳到第<input aria-label="快速跳到第几条" inputMode="numeric" pattern="[0-9]*" value={quickJumpDraft} onChange={(event) => setQuickJumpDraft(event.target.value.replace(/\D/g, ""))} onFocus={(event) => event.currentTarget.select()} onBlur={submitQuickJump} />条</label></form></div><div className="annotation-quick-membership"><small>{quickScope === "library" ? `复习库 ${quickLibraryLevel}` : quickScope === "chapter" ? "当前章节" : quickScope === "sprint" ? `冲刺第 ${selectedSprintDay} 天` : "全部批注"}</small>{targetLibraryLevel ? <button type="button" className={targetReviewRecordIds.has(currentQuickRecord.id) ? "is-added" : ""} onClick={() => onAddToReview(currentQuickRecord, targetLibraryLevel)} disabled={targetReviewRecordIds.has(currentQuickRecord.id)}><kbd>1</kbd>{targetReviewRecordIds.has(currentQuickRecord.id) ? `已加入复习库 ${targetLibraryLevel}` : `加入复习库 ${targetLibraryLevel}`}</button> : <button type="button" className="is-added" disabled><kbd>1</kbd>已到复习库 3</button>}</div></header>
-                <div className="annotation-quick-source"><strong><HighlightedEntryText text={currentQuickRecord.entryText} ranges={currentQuickRecord.entryTextHighlights} entryId={currentQuickRecord.entryId} versionId={currentQuickRecord.versionId} /></strong><button type="button" onClick={() => visitRecord(currentQuickRecord, true)}>第 {currentQuickRecord.page} 页 ›</button></div>
-                <div className="annotation-quick-note"><InlineNoteEditor key={currentQuickRecord.id} record={currentQuickRecord} onSave={onUpdateNote} onHighlight={onHighlightNote} onRemoveHighlight={onRemoveNoteHighlight} /></div>
+                <div className="annotation-quick-card-buffer">
+                  {quickRenderRecords.map((record) => {
+                    const active = record.id === currentQuickRecord.id;
+                    return (
+                      <div className={`annotation-quick-card ${active ? "is-active" : "is-buffered"}`} aria-hidden={!active} key={record.id}>
+                        <QuickReviewCard
+                          record={record}
+                          onVisit={visitRecord}
+                          onUpdateNote={onUpdateNote}
+                          onHighlightNote={onHighlightNote}
+                          onRemoveNoteHighlight={onRemoveNoteHighlight}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
                 <footer><button type="button" disabled={safeQuickIndex === 0} onClick={() => goToQuickIndex(safeQuickIndex - 1)}><kbd>A</kbd> 上一条</button><button type="button" disabled={safeQuickIndex >= quickRecords.length - 1} onClick={() => goToQuickIndex(safeQuickIndex + 1)}>下一条 <kbd>S</kbd></button></footer>
               </> : <p className="annotation-calendar-no-records">当前范围没有批注</p>}
             </section>

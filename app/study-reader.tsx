@@ -98,6 +98,7 @@ type OCRPage = {
 
 type ReadingMode = "scroll" | "page";
 type InteractionMode = "highlight" | "entry";
+const EMPTY_HIGHLIGHT_RANGES: NoteHighlightRange[] = [];
 
 function mapVersionsIfChanged(
   current: StudyVersion[],
@@ -889,6 +890,7 @@ export function StudyReader() {
   const [pendingAnnotationJump, setPendingAnnotationJump] = useState<{
     entryId: string;
     page: number;
+    fast?: boolean;
   } | null>(null);
   const [expandedOutlineRoots, setExpandedOutlineRoots] = useState<Set<string>>(() => new Set());
   const [expandedOutlineSections, setExpandedOutlineSections] = useState<Set<string>>(() => new Set());
@@ -975,7 +977,6 @@ export function StudyReader() {
   } | null>(null);
   const versionsRef = useRef(versions);
   const versionsPaintFrameRef = useRef<number | null>(null);
-  const versionsCommitFrameRef = useRef<number | null>(null);
   const fiveDaySprintPlanRef = useRef(fiveDaySprintPlan);
   const reviewBookmarkRef = useRef(reviewBookmark);
 
@@ -992,19 +993,15 @@ export function StudyReader() {
   }, [reviewBookmark]);
 
   const scheduleVersionsRenderAfterPaint = useCallback(() => {
-    if (versionsPaintFrameRef.current !== null || versionsCommitFrameRef.current !== null) return;
+    if (versionsPaintFrameRef.current !== null) return;
     versionsPaintFrameRef.current = requestAnimationFrame(() => {
       versionsPaintFrameRef.current = null;
-      versionsCommitFrameRef.current = requestAnimationFrame(() => {
-        versionsCommitFrameRef.current = null;
-        setVersions(versionsRef.current);
-      });
+      setVersions(versionsRef.current);
     });
   }, []);
 
   useEffect(() => () => {
     if (versionsPaintFrameRef.current !== null) cancelAnimationFrame(versionsPaintFrameRef.current);
-    if (versionsCommitFrameRef.current !== null) cancelAnimationFrame(versionsCommitFrameRef.current);
   }, []);
 
   const commitVersionsDurably = useCallback(
@@ -1031,9 +1028,7 @@ export function StudyReader() {
         scheduleVersionsRenderAfterPaint();
       } else {
         if (versionsPaintFrameRef.current !== null) cancelAnimationFrame(versionsPaintFrameRef.current);
-        if (versionsCommitFrameRef.current !== null) cancelAnimationFrame(versionsCommitFrameRef.current);
         versionsPaintFrameRef.current = null;
-        versionsCommitFrameRef.current = null;
         setVersions(next);
       }
       return true;
@@ -1861,7 +1856,7 @@ export function StudyReader() {
     [mode],
   );
 
-  const centerPageRect = useCallback((page: number, rect: LocatorRect) => {
+  const centerPageRect = useCallback((page: number, rect: LocatorRect, behavior: ScrollBehavior = "smooth") => {
     const viewer = viewerRef.current;
     const article = pageRefs.current[page];
     const sheet = article?.querySelector<HTMLElement>(".page-sheet");
@@ -1884,13 +1879,13 @@ export function StudyReader() {
     viewer.scrollTo({
       left: Math.max(0, targetLeft),
       top: Math.max(0, targetTop),
-      behavior: "smooth",
+      behavior,
     });
     return true;
   }, []);
 
   const revealAnnotationEntry = useCallback(
-    (entry: EntryBlock) => {
+    (entry: EntryBlock, behavior: ScrollBehavior = "smooth") => {
       if (annotationLocatorTimer.current) clearTimeout(annotationLocatorTimer.current);
       setAnnotationLocator({
         page: entry.page,
@@ -1904,8 +1899,8 @@ export function StudyReader() {
 
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (!centerPageRect(entry.page, entry)) {
-            setTimeout(() => centerPageRect(entry.page, entry), 180);
+          if (!centerPageRect(entry.page, entry, behavior)) {
+            setTimeout(() => centerPageRect(entry.page, entry, behavior), 180);
           }
         });
       });
@@ -1914,7 +1909,7 @@ export function StudyReader() {
   );
 
   const jumpToAnnotation = useCallback(
-    (record: AnnotationRecord, options?: { showNote?: boolean }) => {
+    (record: AnnotationRecord, options?: { showNote?: boolean; fast?: boolean }) => {
       if (record.versionId !== activeVersionId) selectVersion(record.versionId);
       setFocusOnly(false);
       setSummaryOnly(false);
@@ -1927,11 +1922,11 @@ export function StudyReader() {
       const entry = entriesById.get(record.entryId);
       if (entry) {
         setPendingAnnotationJump(null);
-        revealAnnotationEntry(entry);
+        revealAnnotationEntry(entry, options?.fast ? "auto" : "smooth");
       } else {
-        setPendingAnnotationJump({ entryId: record.entryId, page: record.page });
+        setPendingAnnotationJump({ entryId: record.entryId, page: record.page, fast: options?.fast });
       }
-      showToast(`正在定位第 ${record.page} 页批注`);
+      if (!options?.fast) showToast(`正在定位第 ${record.page} 页批注`);
     },
     [
       activeVersionId,
@@ -2033,7 +2028,7 @@ export function StudyReader() {
     const entry = entriesById.get(pendingAnnotationJump.entryId);
     if (!entry) return;
     queueMicrotask(() => {
-      revealAnnotationEntry(entry);
+      revealAnnotationEntry(entry, pendingAnnotationJump.fast ? "auto" : "smooth");
       setPendingAnnotationJump(null);
     });
   }, [entriesById, pendingAnnotationJump, revealAnnotationEntry]);
@@ -3011,8 +3006,8 @@ export function StudyReader() {
               page,
               entryText: entry?.text.trim() || `第 ${page} 页批注条目`,
               note,
-              noteHighlights: version.noteHighlights[entryId] ?? [],
-              entryTextHighlights: version.entryTextHighlights[entryId] ?? [],
+              noteHighlights: version.noteHighlights[entryId] ?? EMPTY_HIGHLIGHT_RANGES,
+              entryTextHighlights: version.entryTextHighlights[entryId] ?? EMPTY_HIGHLIGHT_RANGES,
               entryY: entry?.y ?? 0,
               outlinePath: outlinePathForLocation(OUTLINE, page, entry?.y ?? 0),
               createdAt: version.noteCreatedAt[entryId] ?? null,
@@ -3041,8 +3036,8 @@ export function StudyReader() {
                 page: entry?.page ?? item.page,
                 entryText: entry?.text.trim() || item.entryText,
                 note: version.notes[item.entryId] ?? "",
-                noteHighlights: version.noteHighlights[item.entryId] ?? [],
-                entryTextHighlights: version.entryTextHighlights[item.entryId] ?? [],
+                noteHighlights: version.noteHighlights[item.entryId] ?? EMPTY_HIGHLIGHT_RANGES,
+                entryTextHighlights: version.entryTextHighlights[item.entryId] ?? EMPTY_HIGHLIGHT_RANGES,
                 entryY: entry?.y ?? item.entryY,
                 outlinePath: outlinePathForLocation(
                   OUTLINE,
@@ -3106,7 +3101,6 @@ export function StudyReader() {
 
   useEffect(() => {
     if (!showDockedHistoryNote || !annotationHistoryMiniBounds) return;
-    const timers: Array<ReturnType<typeof setTimeout>> = [];
     let frame = 0;
     const placeNote = () => {
       if (dockedNoteManuallyPositioned.current) return;
@@ -3161,16 +3155,23 @@ export function StudyReader() {
       );
     };
 
-    frame = requestAnimationFrame(placeNote);
-    [180, 420, 760].forEach((delay) => timers.push(setTimeout(placeNote, delay)));
+    const schedulePlaceNote = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        placeNote();
+      });
+    };
+    schedulePlaceNote();
+    const retryTimer = setTimeout(schedulePlaceNote, 180);
     const viewer = viewerRef.current;
-    window.addEventListener("resize", placeNote);
-    viewer?.addEventListener("scroll", placeNote, { passive: true });
+    window.addEventListener("resize", schedulePlaceNote);
+    viewer?.addEventListener("scroll", schedulePlaceNote, { passive: true });
     return () => {
-      cancelAnimationFrame(frame);
-      timers.forEach(clearTimeout);
-      window.removeEventListener("resize", placeNote);
-      viewer?.removeEventListener("scroll", placeNote);
+      if (frame) cancelAnimationFrame(frame);
+      clearTimeout(retryTimer);
+      window.removeEventListener("resize", schedulePlaceNote);
+      viewer?.removeEventListener("scroll", schedulePlaceNote);
     };
   }, [
     annotationHistoryMiniBounds,
