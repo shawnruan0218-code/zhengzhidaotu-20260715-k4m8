@@ -56,12 +56,6 @@ export function HighlightedEntryText({ text, ranges = [], entryId, versionId }: 
       data-entry-highlight-root="true"
       data-entry-id={entryId}
       data-entry-version-id={versionId}
-      onPointerDown={() => {
-        rememberedSelection = null;
-      }}
-      onPointerUp={() => {
-        if (!rememberSelectedEntryText()) queueMicrotask(() => rememberSelectedEntryText());
-      }}
     >
       {pieces.length ? pieces : text}
     </span>

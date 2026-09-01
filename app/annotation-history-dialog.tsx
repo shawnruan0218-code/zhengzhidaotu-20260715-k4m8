@@ -158,22 +158,6 @@ function RecordNote({ record }: { record: AnnotationRecord }) {
   );
 }
 
-function pointTextOffset(element: HTMLElement, clientX: number, clientY: number) {
-  const caretDocument = document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-    caretRangeFromPoint?: (x: number, y: number) => Range | null;
-  };
-  const position = caretDocument.caretPositionFromPoint?.(clientX, clientY);
-  const fallbackRange = position ? null : caretDocument.caretRangeFromPoint?.(clientX, clientY);
-  const node = position?.offsetNode ?? fallbackRange?.startContainer;
-  const offset = position?.offset ?? fallbackRange?.startOffset;
-  if (!node || typeof offset !== "number" || !element.contains(node)) return element.textContent?.length ?? 0;
-  const range = document.createRange();
-  range.selectNodeContents(element);
-  range.setEnd(node, offset);
-  return range.toString().length;
-}
-
 function InlineNoteEditor({
   record,
   onSave,
@@ -215,103 +199,112 @@ function InlineNoteEditor({
     };
   }, [draft, editing, record.note, resize, saveDraft]);
 
-  if (editing) {
-    return (
-      <textarea
-        ref={textareaRef}
-        className="annotation-inline-note-editor"
-        aria-label={`直接修改“${record.entryText}”的批注`}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
-          saveDraft();
-          setEditing(false);
-        }}
-        onKeyDown={(event) => {
-          const key = shortcutKey(event);
-          const textarea = event.currentTarget;
-          if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f") && textarea.selectionEnd > textarea.selectionStart) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.repeat) return;
-            const selection = {
-              entryId: record.entryId,
-              versionId: record.versionId,
-              start: textarea.selectionStart,
-              end: textarea.selectionEnd,
-              quote: draft.slice(textarea.selectionStart, textarea.selectionEnd),
-            } satisfies SelectedNoteText;
-            if (key === "d") onHighlight(selection);
-            else onRemoveHighlight(selection);
-            return;
-          }
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            saveDraft();
-            textarea.blur();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            setDraft(record.note);
-            textarea.blur();
-          }
-        }}
-      />
-    );
-  }
+  const beginEditing = useCallback(() => {
+    setDraft(record.note);
+    setEditing(true);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      resize();
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+  }, [record.note, resize]);
 
   return (
-    <div
-      role="textbox"
-      tabIndex={0}
-      className="annotation-inline-note-display"
-      aria-label={`直接修改“${record.entryText}”的批注`}
-      aria-readonly="true"
-      onClick={(event) => {
-        const selection = window.getSelection();
-        if (selection && !selection.isCollapsed && event.currentTarget.contains(selection.anchorNode)) return;
-        const offset = pointTextOffset(event.currentTarget, event.clientX, event.clientY);
-        setEditing(true);
-        requestAnimationFrame(() => {
-          const textarea = textareaRef.current;
-          if (!textarea) return;
-          resize();
-          textarea.focus();
-          textarea.setSelectionRange(Math.min(offset, textarea.value.length), Math.min(offset, textarea.value.length));
-        });
-      }}
-      onKeyDown={(event) => {
-        const key = shortcutKey(event);
-        if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f")) {
-          if (event.repeat) {
-            event.preventDefault();
-            return;
-          }
-          const selection = readSelectedNoteText();
-          if (
-            selection &&
-            selection.entryId === record.entryId &&
-            selection.versionId === record.versionId
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (key === "d") onHighlight(selection);
-            else onRemoveHighlight(selection);
-          }
-          return;
-        }
-        if (event.key !== "Enter" && event.key !== "F2") return;
-        event.preventDefault();
-        setEditing(true);
-        requestAnimationFrame(() => {
-          const textarea = textareaRef.current;
-          if (!textarea) return;
-          resize();
-          textarea.focus();
-          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-        });
-      }}
-    >
-      {record.note ? <RecordNote record={record} /> : <span className="annotation-inline-note-placeholder">点击这里直接输入批注…</span>}
+    <div className={`annotation-inline-note ${editing ? "is-editing" : ""}`}>
+      <div className="annotation-inline-note-toolbar">
+        <button
+          type="button"
+          className="annotation-inline-note-edit"
+          aria-label={editing ? `完成修改“${record.entryText}”的批注` : `编辑“${record.entryText}”的批注`}
+          onMouseDown={(event) => {
+            if (editing) event.preventDefault();
+          }}
+          onClick={() => {
+            if (editing) {
+              saveDraft();
+              setEditing(false);
+            } else {
+              beginEditing();
+            }
+          }}
+        >
+          {editing ? "完成" : "编辑"}
+        </button>
+      </div>
+      {editing ? (
+        <textarea
+          ref={textareaRef}
+          className="annotation-inline-note-editor"
+          aria-label={`直接修改“${record.entryText}”的批注`}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            saveDraft();
+            setEditing(false);
+          }}
+          onKeyDown={(event) => {
+            const key = shortcutKey(event);
+            const textarea = event.currentTarget;
+            if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f") && textarea.selectionEnd > textarea.selectionStart) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.repeat) return;
+              const selection = {
+                entryId: record.entryId,
+                versionId: record.versionId,
+                start: textarea.selectionStart,
+                end: textarea.selectionEnd,
+                quote: draft.slice(textarea.selectionStart, textarea.selectionEnd),
+              } satisfies SelectedNoteText;
+              if (key === "d") onHighlight(selection);
+              else onRemoveHighlight(selection);
+              return;
+            }
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              saveDraft();
+              textarea.blur();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              setDraft(record.note);
+              textarea.blur();
+            }
+          }}
+        />
+      ) : (
+        <div
+          role="textbox"
+          tabIndex={0}
+          className="annotation-inline-note-display"
+          aria-label={`“${record.entryText}”的批注，只读；点上方编辑按钮可修改`}
+          aria-readonly="true"
+          onKeyDown={(event) => {
+            const key = shortcutKey(event);
+            if (!event.metaKey && !event.ctrlKey && !event.altKey && (key === "d" || key === "f")) {
+              if (event.repeat) {
+                event.preventDefault();
+                return;
+              }
+              const selection = readSelectedNoteText();
+              if (
+                selection &&
+                selection.entryId === record.entryId &&
+                selection.versionId === record.versionId
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (key === "d") onHighlight(selection);
+                else onRemoveHighlight(selection);
+              }
+              return;
+            }
+          }}
+        >
+          {record.note ? <RecordNote record={record} /> : <span className="annotation-inline-note-placeholder">暂无批注，点上方“编辑”添加</span>}
+        </div>
+      )}
     </div>
   );
 }

@@ -63,12 +63,6 @@ export function HighlightedNoteText({
       data-note-highlight-root="true"
       data-note-entry-id={entryId}
       data-note-version-id={versionId}
-      onPointerDown={() => {
-        rememberedSelection = null;
-      }}
-      onPointerUp={() => {
-        if (!rememberSelectedNoteText()) queueMicrotask(() => rememberSelectedNoteText());
-      }}
     >
       {pieces.length ? pieces : text}
     </span>

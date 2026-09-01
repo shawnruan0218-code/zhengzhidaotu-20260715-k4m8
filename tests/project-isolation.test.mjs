@@ -105,8 +105,9 @@ test("a cloud sync finishing after a highlight always reconciles against the new
 });
 
 test("highlight feedback paints immediately without weakening durable storage or sync", async () => {
-  const [reader, noteText, entryText, feedback, css, sync] = await Promise.all([
+  const [reader, history, noteText, entryText, feedback, css, sync] = await Promise.all([
     source("app/study-reader.tsx"),
+    source("app/annotation-history-dialog.tsx"),
     source("app/note-highlight-text.tsx"),
     source("app/entry-highlight-text.tsx"),
     source("app/lib/selection-feedback.ts"),
@@ -121,13 +122,15 @@ test("highlight feedback paints immediately without weakening durable storage or
   assert.equal([...reader.matchAll(/\{ afterPaint: true \}/g)].length, 4);
   assert.equal([...reader.matchAll(/localStorage\.setItem\(\s*STORAGE_KEYS\.library/g)].length, 2);
   assert.match(reader, /mapVersionsIfChanged[\s\S]*?return changed \? next : current/);
-  assert.match(noteText, /onPointerUp=\{\(\) => \{\s*if \(!rememberSelectedNoteText\(\)\) queueMicrotask/);
-  assert.match(entryText, /onPointerUp=\{\(\) => \{\s*if \(!rememberSelectedEntryText\(\)\) queueMicrotask/);
+  assert.doesNotMatch(noteText, /onPointer(?:Down|Up)/);
+  assert.doesNotMatch(entryText, /onPointer(?:Down|Up)/);
+  assert.match(history, /className="annotation-inline-note-edit"/);
+  assert.doesNotMatch(history, /pointTextOffset|点击这里直接输入批注/);
   assert.match(feedback, /sameSelection[\s\S]*?requestAnimationFrame[\s\S]*?requestAnimationFrame[\s\S]*?requestAnimationFrame/);
   assert.match(css, /\.note-highlight-text::selection[\s\S]*?background: rgba\(255, 214, 10, 0\.58\)/);
   assert.match(css, /\.entry-highlight-text::selection[\s\S]*?background: #ffe27a/);
   assert.match(css, /\.floating-note\.history-docked-note[\s\S]*?backdrop-filter: none/);
-  assert.match(css, /\.annotation-quick-review[\s\S]*?contain: paint/);
+  assert.match(css, /\.annotation-quick-review[\s\S]*?contain: layout paint style/);
   assert.match(sync, /latestInputs\.current\.versionsRef\.current/);
 });
 
